@@ -20,11 +20,34 @@ import { ShameCardComponent } from './components/ShameCardComponent';
 import { AdminPanelComponent } from './components/AdminPanelComponent';
 
 export default function App() {
-  // Theme State (loads initially from preset to avoid flicker, then updates from backend)
-  const [theme, setTheme] = useState<ThemeSettings>(PRESET_THEMES.artistic);
+  // Theme State (loads initially from localStorage to avoid dark flicker, then updates from backend)
+  const [theme, setTheme] = useState<ThemeSettings>(() => {
+    const saved = localStorage.getItem('shame_active_theme');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.siteSubtitle === 'Архив забавных проступков и курьезных ошибок нашей команды') {
+          parsed.siteSubtitle = 'by mad & terramata & социальное дно';
+        }
+        return parsed;
+      } catch {}
+    }
+    return PRESET_THEMES.artistic;
+  });
 
   // Cards State
-  const [cards, setCards] = useState<ShameCard[]>(initialShameCards);
+  const [cards, setCards] = useState<ShameCard[]>(() => {
+    const saved = localStorage.getItem('shame_cards_data');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4');
+        }
+      } catch {}
+    }
+    return initialShameCards;
+  });
 
   // Navigation & Search State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
@@ -34,7 +57,7 @@ export default function App() {
   const [filterSeverity, setFilterSeverity] = useState('All');
   const [sortBy, setSortBy] = useState<'tomatoes' | 'date_new' | 'date_old' | 'name'>('tomatoes');
 
-  // Load data from DB on mount
+  // Load data from DB on mount and keep sync
   useEffect(() => {
     fetch('/api/theme')
       .then((res) => {
@@ -48,20 +71,24 @@ export default function App() {
             updated.siteSubtitle = 'by mad & terramata & социальное дно';
           }
           setTheme(updated);
+          localStorage.setItem('shame_active_theme', JSON.stringify(updated));
+        } else {
+          // Sync localStorage theme back to database if database is fresh/empty
+          const saved = localStorage.getItem('shame_active_theme');
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              fetch('/api/theme', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(parsed),
+              }).catch((err) => console.error('Error auto-syncing theme to DB', err));
+            } catch {}
+          }
         }
       })
-      .catch(() => {
-        // Fallback to local storage if API call fails
-        const saved = localStorage.getItem('shame_active_theme');
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (parsed && parsed.siteSubtitle === 'Архив забавных проступков и курьезных ошибок нашей команды') {
-              parsed.siteSubtitle = 'by mad & terramata & социальное дно';
-            }
-            setTheme(parsed);
-          } catch {}
-        }
+      .catch((err) => {
+        console.warn('API /api/theme loading error, keeping localStorage theme:', err);
       });
 
     fetch('/api/cards')
@@ -76,17 +103,8 @@ export default function App() {
           localStorage.setItem('shame_cards_data', JSON.stringify(filtered));
         }
       })
-      .catch(() => {
-        // Fallback to local storage if API call fails
-        const saved = localStorage.getItem('shame_cards_data');
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed)) {
-              setCards(parsed.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4'));
-            }
-          } catch {}
-        }
+      .catch((err) => {
+        console.warn('API /api/cards loading error, keeping localStorage cards:', err);
       });
   }, []);
 
