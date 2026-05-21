@@ -45,7 +45,7 @@ export const PRESET_THEMES: Record<ThemePreset, ThemeSettings> = {
     gridColumns: '3',
     showBackgroundNoise: false,
     siteTitle: 'Доска Позора',
-    siteSubtitle: 'Архив забавных проступков и курьезных ошибок нашей команды',
+    siteSubtitle: 'by mad & terramata & социальное дно',
   },
   crimson: {
     id: 'crimson',

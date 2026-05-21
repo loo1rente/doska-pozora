@@ -43,7 +43,11 @@ export default function App() {
       })
       .then((data) => {
         if (data && data.id) {
-          setTheme(data);
+          const updated = { ...data };
+          if (updated.siteSubtitle === 'Архив забавных проступков и курьезных ошибок нашей команды') {
+            updated.siteSubtitle = 'by mad & terramata & социальное дно';
+          }
+          setTheme(updated);
         }
       })
       .catch(() => {
@@ -51,7 +55,11 @@ export default function App() {
         const saved = localStorage.getItem('shame_active_theme');
         if (saved) {
           try {
-            setTheme(JSON.parse(saved));
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.siteSubtitle === 'Архив забавных проступков и курьезных ошибок нашей команды') {
+              parsed.siteSubtitle = 'by mad & terramata & социальное дно';
+            }
+            setTheme(parsed);
           } catch {}
         }
       });
