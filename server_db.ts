@@ -221,6 +221,11 @@ export async function getAllCards(): Promise<ShameCard[]> {
 
 // Add card
 export async function addCard(card: ShameCard): Promise<void> {
+  // Enforce Max Limit of 100 on all reactions to prevent spamming/vandalism
+  card.tomatoes = Math.min(100, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
+  card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
+  card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
+
   if (db) {
     try {
       const docRef = doc(db, 'shame_cards', card.id);
@@ -261,6 +266,11 @@ export async function addCard(card: ShameCard): Promise<void> {
 
 // Update card
 export async function updateCard(card: ShameCard): Promise<void> {
+  // Enforce Max Limit of 100 on all reactions to prevent spamming/vandalism
+  card.tomatoes = Math.min(100, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
+  card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
+  card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
+
   if (db) {
     try {
       const docRef = doc(db, 'shame_cards', card.id);

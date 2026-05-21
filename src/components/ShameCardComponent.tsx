@@ -204,19 +204,28 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
       )}
 
       {/* Hero Visual Area: Image & Splats */}
-      <div className="relative h-56 bg-slate-900/60 overflow-hidden select-none flex-shrink-0 group">
+      <div className="relative h-56 bg-slate-950 overflow-hidden select-none flex-shrink-0 group">
+        {/* Ambient blurred backdrop glow */}
+        <img
+          src={card.photoUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover blur-xl opacity-40 scale-110 pointer-events-none transition-transform duration-500 group-hover:scale-115"
+          referrerPolicy="no-referrer"
+        />
+
+        {/* Main crisp full-visibility image */}
         <img
           src={card.photoUrl}
           alt={card.name}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          className="relative w-full h-full object-contain transition-transform duration-500 group-hover:scale-102 z-10"
           referrerPolicy="no-referrer"
           id={`card-img-${card.id}`}
         />
         {/* Shadow Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none z-10" />
 
         {/* Severity Badge */}
-        <div className="absolute top-3 left-3 z-10">
+        <div className="absolute top-3 left-3 z-20">
           <span
             className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider backdrop-blur-md shadow-md flex items-center gap-1.5 ${severityInfo.bg}`}
           >
@@ -330,16 +339,16 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
             </button>
 
             <button
-              onClick={(e) => spawnParticles(e, '😇', 'forgiven')}
+              onClick={(e) => spawnParticles(e, '🥾', 'forgiven')}
               style={{
                 borderColor: `${theme.accentColor}30`,
               }}
-              className="relative p-2.5 rounded-xl border bg-black/10 hover:bg-emerald-500/10 hover:scale-105 active:scale-95 transition-all text-center flex flex-col items-center justify-center cursor-pointer group"
-              id={`btn-react-forgive-${card.id}`}
+              className="relative p-2.5 rounded-xl border bg-black/10 hover:bg-indigo-500/10 hover:scale-105 active:scale-95 transition-all text-center flex flex-col items-center justify-center cursor-pointer group"
+              id={`btn-react-kick-${card.id}`}
             >
-              <span className="text-lg mb-1 group-hover:scale-110 transition-transform duration-200">🙏</span>
-              <span className="text-xs uppercase font-semibold text-emerald-500 tracking-wider">Простить</span>
-              <span className="text-sm font-bold mt-1 text-emerald-400 font-mono">{card.forgiven}</span>
+              <span className="text-lg mb-1 group-hover:scale-110 group-hover:rotate-12 transition-transform duration-200">🥾</span>
+              <span className="text-xs uppercase font-semibold text-indigo-400 tracking-wider">Испинать</span>
+              <span className="text-sm font-bold mt-1 text-indigo-300 font-mono">{card.forgiven}</span>
             </button>
           </div>
         </div>

@@ -91,21 +91,39 @@ export default function App() {
         console.warn('API /api/theme loading error, keeping localStorage theme:', err);
       });
 
-    fetch('/api/cards')
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
-      .then((data) => {
-        if (Array.isArray(data)) {
-          const filtered = data.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4');
-          setCards(filtered);
-          localStorage.setItem('shame_cards_data', JSON.stringify(filtered));
-        }
-      })
-      .catch((err) => {
-        console.warn('API /api/cards loading error, keeping localStorage cards:', err);
-      });
+    // Clean background polling to sync cards data with backend in real-time
+    const syncCards = () => {
+      fetch('/api/cards')
+        .then((res) => {
+          if (!res.ok) throw new Error();
+          return res.json();
+        })
+        .then((data) => {
+          if (Array.isArray(data)) {
+            const filtered = data.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4');
+            // Compare and only update state if actual reaction counts or length changed, prevents UI flicker
+            setCards((prev) => {
+              const prevJSON = JSON.stringify(prev);
+              const filteredJSON = JSON.stringify(filtered);
+              if (prevJSON !== filteredJSON) {
+                localStorage.setItem('shame_cards_data', filteredJSON);
+                return filtered;
+              }
+              return prev;
+            });
+          }
+        })
+        .catch((err) => {
+          console.warn('API /api/cards sync loading error:', err);
+        });
+    };
+
+    // Initial fetch
+    syncCards();
+
+    // Set up 4-second polling interval
+    const interval = setInterval(syncCards, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   // Theme custom save handler
@@ -127,12 +145,8 @@ export default function App() {
         if (card.id === id) {
           const updated = {
             ...card,
-            [type]: card[type] + 1,
+            [type]: Math.min(100, card[type] + 1),
           };
-          // Forgiveness reduces severity slightly or just balances tomato scores
-          if (type === 'forgiven' && updated.tomatoes > 0) {
-            updated.tomatoes = Math.max(0, updated.tomatoes - 1);
-          }
           updatedCard = updated;
           return updated;
         }
