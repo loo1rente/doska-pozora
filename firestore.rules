@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /shame_cards/{cardId} {
+      allow read, write: if true;
+    }
+
+    match /shame_theme/{themeId} {
+      allow read, write: if true;
+    }
+  }
+}

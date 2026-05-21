@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "ShameCard": {
+      "title": "ShameCard",
+      "description": "Represents an infraction card on the wall of shame.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the card (UUID)." },
+        "name": { "type": "string", "description": "Name of the person who committed the infraction." },
+        "description": { "type": "string", "description": "The detailed story or description of the infraction." },
+        "photoUrl": { "type": "string", "description": "Preset key, Base64 content, or Unsplash photo URL." },
+        "category": { "type": "string", "description": "Category tag of the infraction." },
+        "severity": { "type": "string", "enum": ["minor", "moderate", "epic"], "description": "The severity level of the infraction." },
+        "date": { "type": "string", "format": "date", "description": "The date when the infraction occurred." },
+        "tomatoes": { "type": "number", "description": "Count of tomatoes thrown at this card." },
+        "facepalms": { "type": "number", "description": "Count of facepalm reactions." },
+        "forgiven": { "type": "number", "description": "Count of forgiveness reactions." }
+      },
+      "required": ["id", "name", "description", "photoUrl", "category", "severity", "date", "tomatoes", "facepalms", "forgiven"]
+    },
+    "ThemeSettings": {
+      "title": "ThemeSettings",
+      "description": "Customized UI theme settings of the application.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID of the preset block or 'custom'." },
+        "name": { "type": "string", "description": "Display name of the theme." },
+        "backgroundColor": { "type": "string", "description": "Primary background color hex code." },
+        "cardColor": { "type": "string", "description": "Card background color hex code." },
+        "accentColor": { "type": "string", "description": "Accent color highlighting hex code." },
+        "textColor": { "type": "string", "description": "Primary text font color." },
+        "textSecondaryColor": { "type": "string", "description": "Secondary text font color." },
+        "borderStyle": { "type": "string", "enum": ["none", "solid", "dashed", "neon"], "description": "Border line styling style." },
+        "borderRadius": { "type": "string", "description": "CSS border radius property name." },
+        "fontFamily": { "type": "string", "enum": ["sans", "mono", "serif", "grotesk"], "description": "App typography family choice." },
+        "gridColumns": { "type": "string", "enum": ["2", "3", "4"], "description": "Layout columns count." },
+        "showBackgroundNoise": { "type": "boolean", "description": "Toggle active grainy canvas overlay texture." },
+        "siteTitle": { "type": "string", "description": "Title centered in page header." },
+        "siteSubtitle": { "type": "string", "description": "Subtitle below the main title." }
+      },
+      "required": [
+        "id", "name", "backgroundColor", "cardColor", "accentColor", "textColor", "textSecondaryColor",
+        "borderStyle", "borderRadius", "fontFamily", "gridColumns", "showBackgroundNoise", "siteTitle", "siteSubtitle"
+      ]
+    }
+  },
+  "firestore": {
+    "shame_cards/{cardId}": {
+      "schema": "ShameCard",
+      "description": "Collection storing all active shame cards added by team."
+    },
+    "shame_theme/{themeId}": {
+      "schema": "ThemeSettings",
+      "description": "Collection storing active system theme parameters."
+    }
+  }
+}

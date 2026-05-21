@@ -1,16 +1,93 @@
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, collection, getDocs, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import { ShameCard, ThemeSettings } from './src/types';
 import { initialShameCards } from './src/data/initialData';
 
-// Setup database mode
+// Firestore Operation Helpers for Error Handler
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// 1. Firebase Firestore Setup
+const firebaseApiKey = process.env.FIREBASE_API_KEY;
+const firebaseAuthDomain = process.env.FIREBASE_AUTH_DOMAIN;
+const firebaseProjectId = process.env.FIREBASE_PROJECT_ID;
+const firebaseFirestoreDatabaseId = process.env.FIREBASE_FIRESTORE_DATABASE_ID;
+const firebaseStorageBucket = process.env.FIREBASE_STORAGE_BUCKET;
+const firebaseMessagingSenderId = process.env.FIREBASE_MESSAGING_SENDER_ID;
+const firebaseAppId = process.env.FIREBASE_APP_ID;
+
+let firebaseConfig: any = null;
+
+if (firebaseApiKey && firebaseProjectId) {
+  firebaseConfig = {
+    apiKey: firebaseApiKey,
+    authDomain: firebaseAuthDomain,
+    projectId: firebaseProjectId,
+    firestoreDatabaseId: firebaseFirestoreDatabaseId,
+    storageBucket: firebaseStorageBucket,
+    messagingSenderId: firebaseMessagingSenderId,
+    appId: firebaseAppId
+  };
+} else {
+  // Fallback to config file in development
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    try {
+      firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (e) {
+      console.error('Error reading firebase-applet-config.json', e);
+    }
+  }
+}
+
+let db: any = null;
+if (firebaseConfig) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+    console.log(`Firebase Firestore initialized successfully for project ${firebaseConfig.projectId}`);
+  } catch (e) {
+    console.error('Failed to initialize Firebase Firestore SDK:', e);
+  }
+}
+
+// 2. PostgreSQL Setup
 const databaseUrl = process.env.DATABASE_URL || '';
 const isPostgres = databaseUrl.trim().length > 0;
 
-const JSON_FILE_PATH = path.join(process.cwd(), 'shame_data_backup.json');
-
-// Postgres Client Pool/Client Setup
 let pool: pg.Pool | null = null;
 if (isPostgres) {
   console.log('Connecting to PostgreSQL database using DATABASE_URL...');
@@ -18,11 +95,11 @@ if (isPostgres) {
     connectionString: databaseUrl,
     ssl: { rejectUnauthorized: false } // Required for platforms like Render/Neon/etc.
   });
-} else {
-  console.log('No DATABASE_URL found. Working in Local File Database fallback mode using shame_data_backup.json');
 }
 
-// In-memory or file backing utils
+const JSON_FILE_PATH = path.join(process.cwd(), 'shame_data_backup.json');
+
+// In-memory or file backing utils (Local JSON mode)
 function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null } {
   if (fs.existsSync(JSON_FILE_PATH)) {
     try {
@@ -50,6 +127,11 @@ function saveLocalData(cards: ShameCard[], theme: ThemeSettings | null) {
 
 // Initialize tables or JSON file
 export async function initializeDb() {
+  if (db) {
+    console.log('Using Firebase Firestore database as primary storage.');
+    return;
+  }
+
   if (isPostgres && pool) {
     try {
       const dbClient = await pool.connect();
@@ -85,31 +167,6 @@ export async function initializeDb() {
       `);
       console.log('Table "shame_theme" verified/created.');
 
-      // Seed shame_cards table if it's empty
-      const countRes = await dbClient.query('SELECT COUNT(*) FROM shame_cards');
-      const count = parseInt(countRes.rows[0].count, 10);
-      if (count === 0) {
-        console.log('Seeding initial PostgreSQL database cards...');
-        for (const card of initialShameCards) {
-          await dbClient.query(`
-            INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          `, [
-            card.id,
-            card.name,
-            card.description,
-            card.photoUrl,
-            card.category || '',
-            card.severity,
-            card.date,
-            card.tomatoes,
-            card.facepalms,
-            card.forgiven
-          ]);
-        }
-        console.log('Successfully seeded initial PostgreSQL database.');
-      }
-      
       dbClient.release();
     } catch (err) {
       console.error('Failed to initialize PostgreSQL. Falling back to local file model.', err);
@@ -125,6 +182,20 @@ export async function initializeDb() {
 
 // Fetch all Shame Cards
 export async function getAllCards(): Promise<ShameCard[]> {
+  if (db) {
+    try {
+      const q = collection(db, 'shame_cards');
+      const snapshot = await getDocs(q);
+      const cards: ShameCard[] = [];
+      snapshot.forEach((docSnap) => {
+        cards.push(docSnap.data() as ShameCard);
+      });
+      return cards;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'shame_cards');
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       const res = await pool.query('SELECT * FROM shame_cards');
@@ -144,11 +215,22 @@ export async function getAllCards(): Promise<ShameCard[]> {
       console.error('Error fetching cards from Postgres, using local JSON fallback', e);
     }
   }
+
   return loadLocalData().cards;
 }
 
 // Add card
 export async function addCard(card: ShameCard): Promise<void> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_cards', card.id);
+      await setDoc(docRef, card);
+      return;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `shame_cards/${card.id}`);
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       await pool.query(`
@@ -171,6 +253,7 @@ export async function addCard(card: ShameCard): Promise<void> {
       console.error('Error inserting card to Postgres, using local JSON fallback', e);
     }
   }
+
   const data = loadLocalData();
   data.cards.unshift(card);
   saveLocalData(data.cards, data.theme);
@@ -178,6 +261,16 @@ export async function addCard(card: ShameCard): Promise<void> {
 
 // Update card
 export async function updateCard(card: ShameCard): Promise<void> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_cards', card.id);
+      await setDoc(docRef, card);
+      return;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `shame_cards/${card.id}`);
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       await pool.query(`
@@ -201,6 +294,7 @@ export async function updateCard(card: ShameCard): Promise<void> {
       console.error('Error updating card in Postgres, using local JSON fallback', e);
     }
   }
+
   const data = loadLocalData();
   data.cards = data.cards.map(c => c.id === card.id ? card : c);
   saveLocalData(data.cards, data.theme);
@@ -208,6 +302,16 @@ export async function updateCard(card: ShameCard): Promise<void> {
 
 // Delete card
 export async function deleteCard(id: string): Promise<void> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_cards', id);
+      await deleteDoc(docRef);
+      return;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `shame_cards/${id}`);
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       await pool.query('DELETE FROM shame_cards WHERE id = $1', [id]);
@@ -216,6 +320,7 @@ export async function deleteCard(id: string): Promise<void> {
       console.error('Error deleting card in Postgres, using local JSON fallback', e);
     }
   }
+
   const data = loadLocalData();
   data.cards = data.cards.filter(c => c.id !== id);
   saveLocalData(data.cards, data.theme);
@@ -223,6 +328,18 @@ export async function deleteCard(id: string): Promise<void> {
 
 // Get Active Theme
 export async function getActiveTheme(): Promise<ThemeSettings | null> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_theme', 'active_theme');
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data() as ThemeSettings;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'shame_theme/active_theme');
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       const res = await pool.query('SELECT settings FROM shame_theme WHERE id = $1', ['active_theme']);
@@ -233,11 +350,22 @@ export async function getActiveTheme(): Promise<ThemeSettings | null> {
       console.error('Error getting theme from Postgres, using local JSON fallback', e);
     }
   }
+
   return loadLocalData().theme;
 }
 
 // Save Theme
 export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_theme', 'active_theme');
+      await setDoc(docRef, theme);
+      return;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'shame_theme/active_theme');
+    }
+  }
+
   if (isPostgres && pool) {
     try {
       await pool.query(`
@@ -250,6 +378,7 @@ export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
       console.error('Error upserting theme in Postgres, using local JSON fallback', e);
     }
   }
+
   const data = loadLocalData();
   data.theme = theme;
   saveLocalData(data.cards, data.theme);
