@@ -1,0 +1,6 @@
+{
+  "name": "Доска Позора",
+  "description": "Интерактивная доска позора с регулируемой админ-панелью, кастомизацией дизайна онлайн и управлением карточками с фото.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
