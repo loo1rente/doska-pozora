@@ -11,6 +11,7 @@ interface ShameCardComponentProps {
   onEdit: (card: ShameCard) => void;
   onDelete: (id: string) => void;
   index: number;
+  cooldownSecondsLeft: number;
 }
 
 interface Particle {
@@ -30,12 +31,23 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
   onEdit,
   onDelete,
   index,
+  cooldownSecondsLeft,
 }) => {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [splats, setSplats] = useState<{ id: number; x: number; y: number }[]>([]);
   const [particleIdCounter, setParticleIdCounter] = useState(0);
+  const [isKicking, setIsKicking] = useState(false);
+  const [kickId, setKickId] = useState(0);
+
+  const formatSecs = (secs: number) => {
+    const mins = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${mins}:${s.toString().padStart(2, '0')}`;
+  };
 
   const spawnParticles = (e: React.MouseEvent<HTMLButtonElement>, emoji: string, type: 'tomatoes' | 'facepalms' | 'forgiven') => {
+    if (cooldownSecondsLeft > 0) return;
+
     // Perform real state increment
     onReact(card.id, type);
 
@@ -57,6 +69,15 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
       setTimeout(() => {
         setSplats((prev) => prev.filter((s) => s.id !== splatId));
       }, 2500);
+    }
+
+    if (type === 'forgiven') {
+      // Trigger leg kick physical displacement state and id
+      setIsKicking(true);
+      setKickId((prev) => prev + 1);
+      setTimeout(() => {
+        setIsKicking(false);
+      }, 800);
     }
 
     for (let i = 0; i < count; i++) {
@@ -149,9 +170,23 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
     <motion.div
       layout
       initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+      animate={
+        isKicking
+          ? {
+              x: [0, -45, 35, -25, 15, -5, 0],
+              y: [0, -15, 10, -5, 3, 0],
+              rotate: [0, -12, 10, -8, 5, -2, 0],
+              scale: [1, 1.05, 0.98, 1.02, 1],
+            }
+          : { opacity: 1, y: 0 }
+      }
+      transition={
+        isKicking
+          ? { duration: 0.6, ease: "easeOut" }
+          : { duration: 0.3 }
+      }
       exit={{ opacity: 0, scale: 0.95 }}
-      whileHover={{ y: -4, transition: { duration: 0.2 } }}
+      whileHover={isKicking ? {} : { y: -4, transition: { duration: 0.2 } }}
       style={{
         backgroundColor: theme.cardColor,
         borderRadius: theme.borderRadius,
@@ -161,6 +196,48 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
       className={`relative overflow-hidden transition-all duration-300 shadow-xl flex flex-col h-full ${getFontClass()}`}
       id={`shame-card-${card.id}`}
     >
+      {/* Physical giant leg kick comic animation overlay */}
+      <AnimatePresence>
+        {isKicking && (
+          <>
+            <motion.div
+              key={`leg-${kickId}`}
+              initial={{ x: -180, y: 180, rotate: -45, opacity: 0, scale: 0.5 }}
+              animate={{
+                x: [-180, 50, -180],
+                y: [180, -50, 180],
+                rotate: [-45, 18, -45],
+                opacity: [0, 1, 1, 0],
+                scale: [0.5, 2.3, 0.5],
+              }}
+              transition={{
+                duration: 0.55,
+                times: [0, 0.35, 1],
+                ease: "easeInOut",
+              }}
+              className="absolute inset-0 flex items-center justify-center pointer-events-none z-40 select-none text-[160px]"
+            >
+              🦵
+            </motion.div>
+            <motion.div
+              key={`impact-${kickId}`}
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{
+                scale: [0, 2.0, 0],
+                opacity: [0, 1, 0],
+              }}
+              transition={{
+                duration: 0.4,
+                delay: 0.16,
+              }}
+              className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 select-none text-8xl"
+            >
+              💥
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Background card index number for Artistic style */}
       <div className="absolute top-0 right-0 p-3 text-7xl font-sans font-black select-none pointer-events-none z-0 opacity-10">
         {(index + 1).toString().padStart(2, '0')}
@@ -314,40 +391,61 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
             {/* Reaction Buttons */}
             <button
               onClick={(e) => spawnParticles(e, '🍅', 'tomatoes')}
+              disabled={cooldownSecondsLeft > 0}
               style={{
                 borderColor: `${theme.accentColor}30`,
               }}
-              className="relative p-2.5 rounded-xl border bg-black/10 hover:bg-red-500/10 hover:scale-105 active:scale-95 transition-all text-center flex flex-col items-center justify-center cursor-pointer group"
+              className={`relative p-2.5 rounded-xl border bg-black/10 transition-all text-center flex flex-col items-center justify-center group ${
+                cooldownSecondsLeft > 0
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'hover:bg-red-500/10 hover:scale-105 active:scale-95 cursor-pointer'
+              }`}
               id={`btn-react-tomato-${card.id}`}
             >
               <span className="text-lg mb-1 group-hover:rotate-12 transition-transform duration-200">🍅</span>
-              <span className="text-xs uppercase font-semibold text-red-500 tracking-wider">Кинуть</span>
+              <span className={`text-xs uppercase font-semibold tracking-wider ${cooldownSecondsLeft > 0 ? 'text-zinc-500 font-mono text-[10px]' : 'text-red-500'}`}>
+                {cooldownSecondsLeft > 0 ? formatSecs(cooldownSecondsLeft) : 'Кинуть'}
+              </span>
               <span className="text-sm font-bold mt-1 text-red-400 font-mono">{card.tomatoes}</span>
             </button>
 
             <button
               onClick={(e) => spawnParticles(e, '🤦', 'facepalms')}
+              disabled={cooldownSecondsLeft > 0}
               style={{
                 borderColor: `${theme.accentColor}30`,
               }}
-              className="relative p-2.5 rounded-xl border bg-black/10 hover:bg-amber-600/10 hover:scale-105 active:scale-95 transition-all text-center flex flex-col items-center justify-center cursor-pointer group"
+              className={`relative p-2.5 rounded-xl border bg-black/10 transition-all text-center flex flex-col items-center justify-center group ${
+                cooldownSecondsLeft > 0
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'hover:bg-amber-600/10 hover:scale-105 active:scale-95 cursor-pointer'
+              }`}
               id={`btn-react-facepalm-${card.id}`}
             >
               <span className="text-lg mb-1 group-hover:rotate-12 transition-transform duration-200">🤦</span>
-              <span className="text-xs uppercase font-semibold text-amber-500 tracking-wider">Мдааа</span>
+              <span className={`text-xs uppercase font-semibold tracking-wider ${cooldownSecondsLeft > 0 ? 'text-zinc-500 font-mono text-[10px]' : 'text-amber-500'}`}>
+                {cooldownSecondsLeft > 0 ? formatSecs(cooldownSecondsLeft) : 'Мдааа'}
+              </span>
               <span className="text-sm font-bold mt-1 text-amber-400 font-mono">{card.facepalms}</span>
             </button>
 
             <button
               onClick={(e) => spawnParticles(e, '🥾', 'forgiven')}
+              disabled={cooldownSecondsLeft > 0}
               style={{
                 borderColor: `${theme.accentColor}30`,
               }}
-              className="relative p-2.5 rounded-xl border bg-black/10 hover:bg-indigo-500/10 hover:scale-105 active:scale-95 transition-all text-center flex flex-col items-center justify-center cursor-pointer group"
+              className={`relative p-2.5 rounded-xl border bg-black/10 transition-all text-center flex flex-col items-center justify-center group ${
+                cooldownSecondsLeft > 0
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'hover:bg-indigo-500/10 hover:scale-105 active:scale-95 cursor-pointer'
+              }`}
               id={`btn-react-kick-${card.id}`}
             >
               <span className="text-lg mb-1 group-hover:scale-110 group-hover:rotate-12 transition-transform duration-200">🥾</span>
-              <span className="text-xs uppercase font-semibold text-indigo-400 tracking-wider">Испинать</span>
+              <span className={`text-xs uppercase font-semibold tracking-wider ${cooldownSecondsLeft > 0 ? 'text-zinc-500 font-mono text-[10px]' : 'text-indigo-400'}`}>
+                {cooldownSecondsLeft > 0 ? formatSecs(cooldownSecondsLeft) : 'Испинать'}
+              </span>
               <span className="text-sm font-bold mt-1 text-indigo-300 font-mono">{card.forgiven}</span>
             </button>
           </div>

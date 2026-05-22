@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search,
@@ -42,7 +42,7 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4');
+          return parsed;
         }
       } catch {}
     }
@@ -56,6 +56,92 @@ export default function App() {
   const [filterCategory, setFilterCategory] = useState('All');
   const [filterSeverity, setFilterSeverity] = useState('All');
   const [sortBy, setSortBy] = useState<'tomatoes' | 'date_new' | 'date_old' | 'name'>('tomatoes');
+
+  // Cooldown timer state (1 reaction/15m)
+  const [cooldownEnd, setCooldownEnd] = useState<number>(() => {
+    const saved = localStorage.getItem('shame_cooldown_end');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (parsed > Date.now()) {
+        return parsed;
+      }
+    }
+    return 0;
+  });
+
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const secondsLeft = Math.max(0, Math.ceil((cooldownEnd - currentTime) / 1000));
+
+  const hasUploadedLocalRef = useRef(false);
+
+  // Define syncCards globally for App component so it can be called inside reaction and on rate limit failure
+  const syncCards = () => {
+    fetch('/api/cards')
+      .then((res) => {
+        if (!res.ok) throw new Error();
+        return res.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          const filtered = data;
+          
+          // If the server returns no cards, but we have some local cards saved in localStorage,
+          // we automatically upload them to the server so they get backed up into the Firestore/Postgres DB!
+          if (filtered.length === 0 && !hasUploadedLocalRef.current) {
+            const localSaved = localStorage.getItem('shame_cards_data');
+            if (localSaved) {
+              try {
+                const parsed = JSON.parse(localSaved);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  console.log('Database is empty. Automatically backing up/uploading local cards to server...', parsed);
+                  hasUploadedLocalRef.current = true;
+                  // Send each card to the server
+                  Promise.all(
+                    parsed.map((card) =>
+                      fetch('/api/cards', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(card),
+                      })
+                    )
+                  )
+                    .then(() => {
+                      console.log('Successfully backed up local cards to Firebase database!');
+                      syncCards(); // Refresh data from server
+                    })
+                    .catch((err) => console.error('Error recovering cards to database:', err));
+                  return;
+                }
+              } catch (e) {
+                console.error('Error parsing local cards for recovery:', e);
+              }
+            }
+          }
+
+          // Compare and only update state if actual reaction counts or length changed, prevents UI flicker
+          setCards((prev) => {
+            const prevJSON = JSON.stringify(prev);
+            const filteredJSON = JSON.stringify(filtered);
+            if (prevJSON !== filteredJSON) {
+              localStorage.setItem('shame_cards_data', filteredJSON);
+              return filtered;
+            }
+            return prev;
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('API /api/cards sync loading error:', err);
+      });
+  };
 
   // Load data from DB on mount and keep sync
   useEffect(() => {
@@ -91,33 +177,6 @@ export default function App() {
         console.warn('API /api/theme loading error, keeping localStorage theme:', err);
       });
 
-    // Clean background polling to sync cards data with backend in real-time
-    const syncCards = () => {
-      fetch('/api/cards')
-        .then((res) => {
-          if (!res.ok) throw new Error();
-          return res.json();
-        })
-        .then((data) => {
-          if (Array.isArray(data)) {
-            const filtered = data.filter((c) => c.id !== '2' && c.id !== '3' && c.id !== '4');
-            // Compare and only update state if actual reaction counts or length changed, prevents UI flicker
-            setCards((prev) => {
-              const prevJSON = JSON.stringify(prev);
-              const filteredJSON = JSON.stringify(filtered);
-              if (prevJSON !== filteredJSON) {
-                localStorage.setItem('shame_cards_data', filteredJSON);
-                return filtered;
-              }
-              return prev;
-            });
-          }
-        })
-        .catch((err) => {
-          console.warn('API /api/cards sync loading error:', err);
-        });
-    };
-
     // Initial fetch
     syncCards();
 
@@ -139,6 +198,25 @@ export default function App() {
 
   // Reactions callback
   const handleReact = (id: string, type: 'tomatoes' | 'facepalms' | 'forgiven') => {
+    const isAuthAdmin = localStorage.getItem('shame_admin_auth') === 'true';
+
+    // Client-side block
+    if (!isAuthAdmin) {
+      const savedCooldown = localStorage.getItem('shame_cooldown_end');
+      if (savedCooldown) {
+        const cooldownTime = parseInt(savedCooldown, 10);
+        if (cooldownTime > Date.now()) {
+          // Locked, do not trigger
+          return;
+        }
+      }
+
+      // Start new cooldown (15 minutes)
+      const newCooldown = Date.now() + 15 * 60 * 1000;
+      setCooldownEnd(newCooldown);
+      localStorage.setItem('shame_cooldown_end', newCooldown.toString());
+    }
+
     setCards((prevCards) => {
       let updatedCard: ShameCard | null = null;
       const newCards = prevCards.map((card) => {
@@ -155,11 +233,39 @@ export default function App() {
 
       if (updatedCard) {
         localStorage.setItem('shame_cards_data', JSON.stringify(newCards));
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-Action-React': 'true'
+        };
+
+        if (isAuthAdmin) {
+          headers['Authorization'] = '123dkdk';
+        }
+
         fetch(`/api/cards/${id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: headers,
           body: JSON.stringify(updatedCard),
-        }).catch((err) => console.error('Error updating reaction', err));
+        })
+        .then(async (res) => {
+          if (res.status === 429) {
+            const data = await res.json();
+            const retryAfterSec = data.retryAfter || (15 * 60);
+            const serverCooldown = Date.now() + retryAfterSec * 1000;
+            // Align client timer with server
+            setCooldownEnd(serverCooldown);
+            localStorage.setItem('shame_cooldown_end', serverCooldown.toString());
+            // Sync with current database layout
+            syncCards();
+          } else if (!res.ok) {
+            syncCards();
+          }
+        })
+        .catch((err) => {
+          console.error('Error updating reaction', err);
+          syncCards();
+        });
       }
 
       return newCards;

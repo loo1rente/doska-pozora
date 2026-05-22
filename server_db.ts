@@ -174,32 +174,33 @@ export async function initializeDb() {
   } else {
     // Local File Mode Setup check
     let data = loadLocalData();
-    data.cards = data.cards.filter(c => c.id !== '2' && c.id !== '3' && c.id !== '4');
     saveLocalData(data.cards, data.theme);
-    console.log('Local File Database (shame_data_backup.json) initialized and cleared of old seed data.');
+    console.log('Local File Database (shame_data_backup.json) initialized.');
   }
 }
 
 // Fetch all Shame Cards
 export async function getAllCards(): Promise<ShameCard[]> {
+  let dbCards: ShameCard[] = [];
+  let dbSuccess = false;
+
   if (db) {
     try {
       const q = collection(db, 'shame_cards');
       const snapshot = await getDocs(q);
-      const cards: ShameCard[] = [];
       snapshot.forEach((docSnap) => {
-        cards.push(docSnap.data() as ShameCard);
+        dbCards.push(docSnap.data() as ShameCard);
       });
-      return cards;
+      dbSuccess = true;
     } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'shame_cards');
+      console.error('Firestore list error, falling back to local files:', e);
     }
   }
 
-  if (isPostgres && pool) {
+  if (!dbSuccess && isPostgres && pool) {
     try {
       const res = await pool.query('SELECT * FROM shame_cards');
-      return res.rows.map(row => ({
+      dbCards = res.rows.map(row => ({
         id: row.id,
         name: row.name,
         description: row.description,
@@ -211,12 +212,57 @@ export async function getAllCards(): Promise<ShameCard[]> {
         facepalms: Number(row.facepalms),
         forgiven: Number(row.forgiven)
       }));
+      dbSuccess = true;
     } catch (e) {
-      console.error('Error fetching cards from Postgres, using local JSON fallback', e);
+      console.error('Postgres list error, using local JSON fallback:', e);
     }
   }
 
-  return loadLocalData().cards;
+  // Load from local storage backup file (always exists as safety net)
+  const localData = loadLocalData();
+  const localCards = localData.cards;
+
+  // Merge dbCards and localCards by ID
+  const mergedMap = new Map<string, ShameCard>();
+
+  // Insert local cards first
+  for (const card of localCards) {
+    mergedMap.set(card.id, card);
+  }
+
+  // Insert db cards, merging properties
+  for (const card of dbCards) {
+    const existing = mergedMap.get(card.id);
+    if (existing) {
+      const merged: ShameCard = {
+        ...card,
+        tomatoes: Math.max(existing.tomatoes || 0, card.tomatoes || 0),
+        facepalms: Math.max(existing.facepalms || 0, card.facepalms || 0),
+        forgiven: Math.max(existing.forgiven || 0, card.forgiven || 0),
+      };
+      mergedMap.set(card.id, merged);
+    } else {
+      mergedMap.set(card.id, card);
+    }
+  }
+
+  const finalCards = Array.from(mergedMap.values());
+
+  // Self-heal: If Firestore succeeded but didn't have some cards that exist locally, upload them!
+  if (db && dbSuccess) {
+    for (const card of finalCards) {
+      const alreadyInDb = dbCards.some(dbC => dbC.id === card.id);
+      if (!alreadyInDb) {
+        const docRef = doc(db, 'shame_cards', card.id);
+        setDoc(docRef, card).catch((err) => console.error(`Self-heal write failed for ${card.id}:`, err));
+      }
+    }
+  }
+
+  // Also write the fully merged and synchronized list back to local FS so it is safely backed up
+  saveLocalData(finalCards, localData.theme);
+
+  return finalCards;
 }
 
 // Add card
@@ -226,21 +272,26 @@ export async function addCard(card: ShameCard): Promise<void> {
   card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
   card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
 
+  // 1. Write to Firestore
   if (db) {
     try {
       const docRef = doc(db, 'shame_cards', card.id);
       await setDoc(docRef, card);
-      return;
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `shame_cards/${card.id}`);
+      console.error('Firestore write error in addCard:', e);
     }
   }
 
+  // 2. Write to Postgres
   if (isPostgres && pool) {
     try {
       await pool.query(`
         INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (id) DO UPDATE 
+        SET name = EXCLUDED.name, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, 
+            category = EXCLUDED.category, severity = EXCLUDED.severity, date = EXCLUDED.date, 
+            tomatoes = EXCLUDED.tomatoes, facepalms = EXCLUDED.facepalms, forgiven = EXCLUDED.forgiven
       `, [
         card.id,
         card.name,
@@ -253,13 +304,14 @@ export async function addCard(card: ShameCard): Promise<void> {
         card.facepalms,
         card.forgiven
       ]);
-      return;
     } catch (e) {
-      console.error('Error inserting card to Postgres, using local JSON fallback', e);
+      console.error('Postgres write error in addCard:', e);
     }
   }
 
+  // 3. Always write to Local File
   const data = loadLocalData();
+  data.cards = data.cards.filter(c => c.id !== card.id);
   data.cards.unshift(card);
   saveLocalData(data.cards, data.theme);
 }
@@ -271,16 +323,17 @@ export async function updateCard(card: ShameCard): Promise<void> {
   card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
   card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
 
+  // 1. Write to Firestore
   if (db) {
     try {
       const docRef = doc(db, 'shame_cards', card.id);
       await setDoc(docRef, card);
-      return;
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `shame_cards/${card.id}`);
+      console.error('Firestore write error in updateCard:', e);
     }
   }
 
+  // 2. Write to Postgres
   if (isPostgres && pool) {
     try {
       await pool.query(`
@@ -299,12 +352,12 @@ export async function updateCard(card: ShameCard): Promise<void> {
         card.facepalms,
         card.forgiven
       ]);
-      return;
     } catch (e) {
-      console.error('Error updating card in Postgres, using local JSON fallback', e);
+      console.error('Postgres write error in updateCard:', e);
     }
   }
 
+  // 3. Always write to Local File
   const data = loadLocalData();
   data.cards = data.cards.map(c => c.id === card.id ? card : c);
   saveLocalData(data.cards, data.theme);
@@ -312,25 +365,26 @@ export async function updateCard(card: ShameCard): Promise<void> {
 
 // Delete card
 export async function deleteCard(id: string): Promise<void> {
+  // 1. Delete from Firestore
   if (db) {
     try {
       const docRef = doc(db, 'shame_cards', id);
       await deleteDoc(docRef);
-      return;
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `shame_cards/${id}`);
+      console.error('Firestore delete error in deleteCard:', e);
     }
   }
 
+  // 2. Delete from Postgres
   if (isPostgres && pool) {
     try {
       await pool.query('DELETE FROM shame_cards WHERE id = $1', [id]);
-      return;
     } catch (e) {
-      console.error('Error deleting card in Postgres, using local JSON fallback', e);
+      console.error('Postgres delete error in deleteCard:', e);
     }
   }
 
+  // 3. Always delete from Local File
   const data = loadLocalData();
   data.cards = data.cards.filter(c => c.id !== id);
   saveLocalData(data.cards, data.theme);
@@ -338,30 +392,43 @@ export async function deleteCard(id: string): Promise<void> {
 
 // Get Active Theme
 export async function getActiveTheme(): Promise<ThemeSettings | null> {
+  let dbTheme: ThemeSettings | null = null;
+  let dbSuccess = false;
+
   if (db) {
     try {
       const docRef = doc(db, 'shame_theme', 'active_theme');
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        return docSnap.data() as ThemeSettings;
+        dbTheme = docSnap.data() as ThemeSettings;
+        dbSuccess = true;
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.GET, 'shame_theme/active_theme');
+      console.error('Firestore error in getActiveTheme:', e);
     }
   }
 
-  if (isPostgres && pool) {
+  if (!dbSuccess && isPostgres && pool) {
     try {
       const res = await pool.query('SELECT settings FROM shame_theme WHERE id = $1', ['active_theme']);
       if (res.rows.length > 0) {
-        return res.rows[0].settings as ThemeSettings;
+        dbTheme = res.rows[0].settings as ThemeSettings;
+        dbSuccess = true;
       }
     } catch (e) {
-      console.error('Error getting theme from Postgres, using local JSON fallback', e);
+      console.error('Postgres error in getActiveTheme:', e);
     }
   }
 
-  return loadLocalData().theme;
+  const localData = loadLocalData();
+  if (dbTheme) {
+    if (JSON.stringify(localData.theme) !== JSON.stringify(dbTheme)) {
+      saveLocalData(localData.cards, dbTheme);
+    }
+    return dbTheme;
+  }
+
+  return localData.theme;
 }
 
 // Save Theme
@@ -370,9 +437,8 @@ export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
     try {
       const docRef = doc(db, 'shame_theme', 'active_theme');
       await setDoc(docRef, theme);
-      return;
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'shame_theme/active_theme');
+      console.error('Firestore error in saveActiveTheme:', e);
     }
   }
 
@@ -383,9 +449,8 @@ export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
         VALUES ($1, $2)
         ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings
       `, ['active_theme', JSON.stringify(theme)]);
-      return;
     } catch (e) {
-      console.error('Error upserting theme in Postgres, using local JSON fallback', e);
+      console.error('Postgres error in saveActiveTheme:', e);
     }
   }
 

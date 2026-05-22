@@ -69,10 +69,40 @@ async function startServer() {
     }
   });
 
+  const lastReactionTimeByIp = new Map<string, number>();
+
   // Update existing infraction card
   app.put("/api/cards/:id", async (req, res) => {
     try {
       const card = req.body;
+      const isReact = req.headers["x-action-react"] === "true";
+
+      if (isReact) {
+        const adminToken = req.headers["authorization"];
+        const isAdmin = adminToken === "123dkdk";
+        if (!isAdmin) {
+          // Get IP address safely from forwarded headers or remote socket
+          const rawIp = req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "127.0.0.1";
+          const ip = rawIp.split(',')[0].trim();
+
+          const now = Date.now();
+          const lastTime = lastReactionTimeByIp.get(ip) || 0;
+          const waitTime = 15 * 60 * 1000; // 15 minutes
+
+          if (now - lastTime < waitTime) {
+            const secsLeft = Math.ceil((waitTime - (now - lastTime)) / 1000);
+            return res.status(429).json({
+              error: "Too Many Requests",
+              retryAfter: secsLeft,
+              message: `Лимит превышен. Пожалуйста, подождите ещё ${Math.floor(secsLeft / 60)} мин.`
+            });
+          }
+
+          // Lock future reactions for this client
+          lastReactionTimeByIp.set(ip, now);
+        }
+      }
+
       await updateCard(card);
       res.json({ success: true, card });
     } catch (err) {
