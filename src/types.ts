@@ -1,3 +1,12 @@
+export interface ShameComment {
+  id: string;
+  author: string;
+  text: string;
+  date: string;
+  parentId?: string; // Optional parentId to support nesting/replies
+  replyToAuthor?: string; // Optional: username we are replying to
+}
+
 export interface ShameCard {
   id: string;
   name: string;
@@ -9,6 +18,7 @@ export interface ShameCard {
   tomatoes: number;
   facepalms: number;
   forgiven: number;
+  comments?: ShameComment[];
 }
 
 export type ThemePreset = 'artistic' | 'crimson' | 'cyberpunk' | 'retro' | 'clean' | 'nordic';
@@ -28,6 +38,9 @@ export interface ThemeSettings {
   showBackgroundNoise: boolean;
   siteTitle: string;
   siteSubtitle: string;
+  reactionCooldown?: number;
+  maxReactionsLimit?: number;
+  commentCooldown?: number;
 }
 
 export const PRESET_THEMES: Record<ThemePreset, ThemeSettings> = {

@@ -12,12 +12,16 @@ import {
   Users,
   UtensilsCrossed,
   ShieldAlert,
-  Frown
+  Frown,
+  Volume2,
+  VolumeX,
+  User
 } from 'lucide-react';
 import { ShameCard, ThemeSettings, PRESET_THEMES } from './types';
 import { initialShameCards, SHAME_CATEGORIES } from './data/initialData';
 import { ShameCardComponent } from './components/ShameCardComponent';
 import { AdminPanelComponent } from './components/AdminPanelComponent';
+import { getMuted, setMuted as saveMuted } from './utils/audioEffects';
 
 export default function App() {
   // Theme State (loads initially from localStorage to avoid dark flicker, then updates from backend)
@@ -49,6 +53,19 @@ export default function App() {
     return initialShameCards;
   });
 
+  // User Nickname State (prompted before entering site, allows terramata/mad admin status)
+  const [userNickname, setUserNickname] = useState<string>(() => {
+    return localStorage.getItem('shame_user_nickname') || '';
+  });
+  const [showNicknameModal, setShowNicknameModal] = useState<boolean>(() => {
+    return !localStorage.getItem('shame_user_nickname');
+  });
+  const [loginError, setLoginError] = useState<string>('');
+  const [typedNick, setTypedNick] = useState<string>(() => {
+    return localStorage.getItem('shame_user_nickname') || '';
+  });
+  const [typedPass, setTypedPass] = useState<string>('');
+
   // Navigation & Search State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<ShameCard | null>(null);
@@ -56,6 +73,13 @@ export default function App() {
   const [filterCategory, setFilterCategory] = useState('All');
   const [filterSeverity, setFilterSeverity] = useState('All');
   const [sortBy, setSortBy] = useState<'tomatoes' | 'date_new' | 'date_old' | 'name'>('tomatoes');
+  const [soundsMuted, setSoundsMuted] = useState(getMuted);
+
+  const toggleMute = () => {
+    const newMuted = !soundsMuted;
+    saveMuted(newMuted);
+    setSoundsMuted(newMuted);
+  };
 
   // Cooldown timer state (1 reaction/15m)
   const [cooldownEnd, setCooldownEnd] = useState<number>(() => {
@@ -198,7 +222,8 @@ export default function App() {
 
   // Reactions callback
   const handleReact = (id: string, type: 'tomatoes' | 'facepalms' | 'forgiven') => {
-    const isAuthAdmin = localStorage.getItem('shame_admin_auth') === 'true';
+    const isSpecialAdmin = ['terramata', 'mad'].includes((userNickname || '').toLowerCase().trim());
+    const isAuthAdmin = isSpecialAdmin || localStorage.getItem('shame_admin_auth') === 'true';
 
     // Client-side block
     if (!isAuthAdmin) {
@@ -211,19 +236,21 @@ export default function App() {
         }
       }
 
-      // Start new cooldown (15 minutes)
-      const newCooldown = Date.now() + 15 * 60 * 1000;
+      // Start new cooldown using theme parameters
+      const cooldownSecs = theme.reactionCooldown ?? 30;
+      const newCooldown = Date.now() + cooldownSecs * 1000;
       setCooldownEnd(newCooldown);
       localStorage.setItem('shame_cooldown_end', newCooldown.toString());
     }
 
     setCards((prevCards) => {
       let updatedCard: ShameCard | null = null;
+      const maxLimit = theme.maxReactionsLimit ?? 100;
       const newCards = prevCards.map((card) => {
         if (card.id === id) {
           const updated = {
             ...card,
-            [type]: Math.min(100, card[type] + 1),
+            [type]: Math.min(maxLimit, card[type] + 1),
           };
           updatedCard = updated;
           return updated;
@@ -251,7 +278,7 @@ export default function App() {
         .then(async (res) => {
           if (res.status === 429) {
             const data = await res.json();
-            const retryAfterSec = data.retryAfter || (15 * 60);
+            const retryAfterSec = data.retryAfter || 30;
             const serverCooldown = Date.now() + retryAfterSec * 1000;
             // Align client timer with server
             setCooldownEnd(serverCooldown);
@@ -303,6 +330,49 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedCard),
     }).catch((err) => console.error('Error updating card', err));
+  };
+
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  // Save/Update user nickname and verify password on backend
+  const handleSaveNickname = async (nick: string, pass: string) => {
+    const cleanedNick = nick.trim();
+    if (!cleanedNick) return;
+
+    setIsLoggingIn(true);
+    setLoginError('');
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: cleanedNick, password: pass }),
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        localStorage.setItem('shame_user_nickname', cleanedNick);
+        setUserNickname(cleanedNick);
+        
+        // If they logged in as terramata, mad, or typed 123dkdk as password, let them be admin on client-side
+        const isSpecial = ['terramata', 'mad'].includes(cleanedNick.toLowerCase());
+        if (isSpecial || pass.trim() === '123dkdk') {
+          localStorage.setItem('shame_admin_auth', 'true');
+        } else {
+          localStorage.removeItem('shame_admin_auth');
+        }
+
+        setShowNicknameModal(false);
+        setTypedPass('');
+      } else {
+        setLoginError(data.message || 'Ошибка авторизации. Проверьте введенные данные.');
+      }
+    } catch (err) {
+      console.error('Login communication error:', err);
+      setLoginError('Не удалось соединиться с сервером. Попробуйте войти позже.');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   // Custom Confirmation Dialog State
@@ -378,6 +448,39 @@ export default function App() {
 
         setConfirmModal(null);
       }
+    });
+  };
+
+  const handleClearAllComments = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'ОЧИСТКА ВСЕХ КОММЕНТАРИЕВ',
+      message: 'Вы уверены, что хотите удалить абсолютно ВСЕ комментарии изо всех карточек нарушителей?',
+      onConfirm: async () => {
+        const updatedCards = cards.map((c) => ({
+          ...c,
+          comments: [],
+        }));
+        setCards(updatedCards);
+        localStorage.setItem('shame_cards_data', JSON.stringify(updatedCards));
+
+        // Submit to Backend
+        try {
+          await Promise.all(
+            updatedCards.map((c) =>
+              fetch(`/api/cards/${c.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(c),
+              })
+            )
+          );
+        } catch (err) {
+          console.error('Error clearing comments on server:', err);
+        }
+
+        setConfirmModal(null);
+      },
     });
   };
 
@@ -478,18 +581,61 @@ export default function App() {
           </span>
         </div>
 
-        <button
-          onClick={() => setIsAdminOpen(true)}
-          style={{
-            borderColor: `${theme.accentColor}40`,
-            boxShadow: `0 0 10px ${theme.accentColor}10`,
-          }}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-full border bg-zinc-950/60 hover:bg-zinc-900 transition-all cursor-pointer text-white hover:scale-105 active:scale-95 select-none group"
-          id="trigger-admin-panel"
-        >
-          <Lock size={12} className="group-hover:rotate-12 transition-transform duration-300 text-red-500" />
-          <span>Админ-Панель</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Sound Effects Toggle */}
+          <button
+            onClick={toggleMute}
+            style={{
+              borderColor: `${theme.accentColor}30`,
+            }}
+            className="flex items-center justify-center p-2 rounded-full border bg-zinc-950/60 hover:bg-zinc-900 text-zinc-400 hover:text-white hover:scale-105 active:scale-95 transition-all cursor-pointer select-none"
+            title={soundsMuted ? "Включить звуковые эффекты" : "Выключить звуковые эффекты"}
+            id="sound-mute-toggle"
+          >
+            {soundsMuted ? (
+              <VolumeX size={14} className="text-zinc-500" />
+            ) : (
+              <Volume2 size={14} className="text-red-500" />
+            )}
+          </button>
+
+          {userNickname && (
+            <div 
+              style={{ borderColor: `${theme.accentColor}25` }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border bg-zinc-950/45 shrink-0"
+              id="header-user-badge"
+            >
+              <User size={12} className="text-zinc-400" />
+              <span className="text-zinc-400 hidden xs:inline">Ник:</span>
+              <span className="font-bold text-zinc-100 flex items-center max-w-[100px] truncate">
+                {userNickname}
+                {['terramata', 'mad'].includes(userNickname.toLowerCase().trim()) && (
+                  <span className="ml-1 text-[8px] tracking-wider font-extrabold bg-red-650/20 text-red-450 border border-red-500/20 px-1 py-0.5 rounded uppercase animate-pulse">ADMIN</span>
+                )}
+              </span>
+              <button
+                onClick={() => setShowNicknameModal(true)}
+                className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors ml-1 font-semibold cursor-pointer border-none bg-transparent"
+                title="Сменить никнейм"
+              >
+                (Сменить)
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={() => setIsAdminOpen(true)}
+            style={{
+              borderColor: `${theme.accentColor}40`,
+              boxShadow: `0 0 10px ${theme.accentColor}10`,
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-full border bg-zinc-950/60 hover:bg-zinc-900 transition-all cursor-pointer text-white hover:scale-105 active:scale-95 select-none group shrink-0"
+            id="trigger-admin-panel"
+          >
+            <Lock size={12} className="group-hover:rotate-12 transition-transform duration-300 text-red-500" />
+            <span>Админ-Панель</span>
+          </button>
+        </div>
       </header>
 
       {/* MAIN CONTAINER */}
@@ -550,6 +696,48 @@ export default function App() {
             </div>
           </motion.div>
         </div>
+
+        {/* Real-time Cooldown Alert Banner */}
+        {secondsLeft > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="mb-8 p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 font-mono text-xs shadow-lg relative overflow-hidden"
+            style={{
+              backgroundColor: `${theme.cardColor}c8`,
+              borderColor: `${theme.accentColor}40`,
+              color: theme.textColor,
+            }}
+          >
+            <div className="flex items-center gap-3 z-10">
+              <span className="relative flex h-3.5 w-3.5 select-none">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500"></span>
+              </span>
+              <div>
+                <span className="font-bold text-red-500 uppercase tracking-wider block sm:inline">Режим охлаждения:</span>
+                <span className="ml-0 sm:ml-2 text-zinc-300">Вы сможете оставить следующую реакцию через <strong className="text-white text-sm bg-black/40 px-2 py-0.5 rounded border border-zinc-800 font-mono tracking-wider ml-1">{Math.floor(secondsLeft / 60)}:{(secondsLeft % 60).toString().padStart(2, '0')}</strong></span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 z-10 self-end sm:self-auto">
+              {theme.reactionCooldown !== 0 ? (
+                <span className="text-[10px] text-zinc-500 hidden md:inline">Лимит: 1 реакция в {theme.reactionCooldown ?? 30} сек.</span>
+              ) : (
+                <span className="text-[10px] text-zinc-500 hidden md:inline">Ограничения по кулдауну отключены</span>
+              )}
+              <button
+                onClick={() => {
+                  setCooldownEnd(0);
+                  localStorage.removeItem('shame_cooldown_end');
+                }}
+                className="px-3 py-1.5 bg-red-650 hover:bg-red-700 active:translate-y-px text-white font-bold rounded-lg transition-all cursor-pointer text-[10px] font-sans border border-red-500/20 shadow-md"
+              >
+                Сбросить кулдаун (Тест)
+              </button>
+            </div>
+          </motion.div>
+        )}
 
         {/* METRICS WIDGETS SECTION (BENTO GRID STYLE) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
@@ -710,7 +898,9 @@ export default function App() {
                     setIsAdminOpen(true);
                   }}
                   onDelete={handleDeleteCard}
+                  onUpdateCard={handleUpdateCard}
                   index={index}
+                  cooldownSecondsLeft={secondsLeft}
                 />
               ))}
             </motion.div>
@@ -749,6 +939,7 @@ export default function App() {
             onUpdateCard={handleUpdateCard}
             onDeleteCard={handleDeleteCard}
             onResetData={handleResetData}
+            onClearAllComments={handleClearAllComments}
             onClose={() => {
               setIsAdminOpen(false);
               setEditingCard(null);
@@ -798,6 +989,147 @@ export default function App() {
                   Подтвердить
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* USER NICKNAME INITIAL GATE MODAL */}
+      <AnimatePresence>
+        {showNicknameModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            {/* Dark Backdrop with intense blur */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (userNickname) setShowNicknameModal(false);
+              }}
+              className="absolute inset-0 bg-black/95 backdrop-blur-xl"
+            />
+
+            {/* Modal Box */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 100 }}
+              className="relative w-full max-w-sm bg-zinc-90 w-full bg-zinc-900 border border-zinc-800/80 rounded-2xl p-6 sm:p-8 shadow-2xl z-10 text-white font-sans overflow-hidden"
+              id="nickname-prompt-container"
+            >
+              {/* Decorative accent board */}
+              <div 
+                className="absolute top-0 left-0 right-0 h-1.5"
+                style={{ backgroundColor: theme.accentColor }}
+              />
+
+              <div className="text-center mb-6">
+                <div 
+                  style={{ backgroundColor: `${theme.accentColor}12`, borderColor: `${theme.accentColor}30` }}
+                  className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 border text-2xl"
+                >
+                  🎭
+                </div>
+                <h2 className="text-xl font-black tracking-tight uppercase">Кто пришел на Стенд?</h2>
+                <p className="text-xs text-zinc-400 mt-2 font-mono leading-relaxed">
+                  Укажите ваш никнейм для входа. Он будет отображаться под комментариями.
+                </p>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (typedNick.trim()) {
+                    handleSaveNickname(typedNick, typedPass);
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] text-zinc-500 font-mono uppercase font-black mb-1 text-left">Ваш никнейм</label>
+                    <input
+                      name="nickname"
+                      type="text"
+                      value={typedNick}
+                      onChange={(e) => {
+                        setTypedNick(e.target.value);
+                        setLoginError('');
+                      }}
+                      required
+                      disabled={isLoggingIn}
+                      placeholder="Придумайте или введите никнейм..."
+                      autoComplete="off"
+                      maxLength={20}
+                      className="w-full p-2.5 font-bold text-center bg-zinc-950 border border-zinc-800 rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 text-white text-base font-mono disabled:opacity-50"
+                      autoFocus
+                      id="nickname-prompt-input"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-zinc-500 font-mono uppercase font-black mb-1 text-left">
+                      Личный пароль доступа
+                    </label>
+                    <input
+                      name="password"
+                      type="password"
+                      value={typedPass}
+                      onChange={(e) => {
+                        setTypedPass(e.target.value);
+                        setLoginError('');
+                      }}
+                      required
+                      disabled={isLoggingIn}
+                      placeholder="Пароль (новый или существующий)"
+                      autoComplete="current-password"
+                      className="w-full p-2.5 text-center bg-zinc-950 border border-zinc-800 rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 text-white text-sm font-mono disabled:opacity-50"
+                      id="nickname-password-input"
+                    />
+                  </div>
+
+                  {loginError && (
+                    <div className="bg-red-950/40 border border-red-900/35 text-red-500 px-3 py-2.5 rounded-xl text-[11px] text-center font-mono whitespace-pre-line leading-relaxed">
+                      ⚠️ {loginError}
+                    </div>
+                  )}
+                  
+                  {/* Informational hints */}
+                  <div className="mt-4 bg-black/40 border border-zinc-850 p-3 rounded-lg text-[10px] text-zinc-400 space-y-1.5 font-mono leading-relaxed">
+                    <div>• <strong className="text-red-400">Регистрация</strong>: Если никнейм свободен, введенный пароль будет надежно закреплен за ним. Никто другой не сможет войти под вашим именем.</div>
+                    <div>• <strong className="text-red-400">Вход</strong>: Если этот никнейм вы уже регистрировали ранее, введите ваш пароль для входа.</div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  {userNickname && (
+                    <button
+                      type="button"
+                      disabled={isLoggingIn}
+                      onClick={() => setShowNicknameModal(false)}
+                      className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-300 cursor-pointer transition-colors disabled:opacity-50"
+                    >
+                      Назад
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isLoggingIn}
+                    className="flex-1 py-2.5 rounded-xl bg-red-650 hover:bg-red-700 text-xs font-bold text-white shadow-lg cursor-pointer transition-colors uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-1"
+                    id="nickname-submit-button"
+                  >
+                    {isLoggingIn ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        Проверка...
+                      </>
+                    ) : (
+                      'Войти'
+                    )}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

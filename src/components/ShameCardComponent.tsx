@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Trash2, Edit3, Calendar, ShieldAlert, Award, GlassWater, Flame } from 'lucide-react';
 import { ShameCard, ThemeSettings } from '../types';
+import { playTomatoSound, playFacepalmSound, playKickSound } from '../utils/audioEffects';
 
 interface ShameCardComponentProps {
   card: ShameCard;
@@ -10,6 +11,7 @@ interface ShameCardComponentProps {
   onReact: (id: string, type: 'tomatoes' | 'facepalms' | 'forgiven') => void;
   onEdit: (card: ShameCard) => void;
   onDelete: (id: string) => void;
+  onUpdateCard: (card: ShameCard) => void;
   index: number;
   cooldownSecondsLeft: number;
 }
@@ -30,6 +32,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
   onReact,
   onEdit,
   onDelete,
+  onUpdateCard,
   index,
   cooldownSecondsLeft,
 }) => {
@@ -38,6 +41,111 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
   const [particleIdCounter, setParticleIdCounter] = useState(0);
   const [isKicking, setIsKicking] = useState(false);
   const [kickId, setKickId] = useState(0);
+
+  // Collapsible CommentsTray and Nested Reply States
+  const [showComments, setShowComments] = useState(false);
+  const [newCommentText, setNewCommentText] = useState('');
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+
+  const getCommentCooldownTimeLeft = () => {
+    const cooldownSecs = theme.commentCooldown ?? 15; // default 15s
+    if (cooldownSecs <= 0) return 0;
+    const lastTimeStr = localStorage.getItem('shame_last_comment_time');
+    if (!lastTimeStr) return 0;
+    const lastTime = parseInt(lastTimeStr, 10);
+    if (isNaN(lastTime)) return 0;
+    const elapsed = Date.now() - lastTime;
+    const remaining = Math.ceil((cooldownSecs * 1000 - elapsed) / 1000);
+    return remaining > 0 ? remaining : 0;
+  };
+
+  const [commentCooldownLeft, setCommentCooldownLeft] = useState(getCommentCooldownTimeLeft());
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      const remainingVal = getCommentCooldownTimeLeft();
+      setCommentCooldownLeft(remainingVal);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [theme.commentCooldown]);
+
+  const handleAddComment = (text: string, parentId?: string, replyToAuthor?: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const nickname = localStorage.getItem('shame_user_nickname') || 'Фигурант';
+    const isSpecial = ['terramata', 'mad'].includes(nickname.toLowerCase().trim());
+
+    // Check cooldown
+    const leftTime = getCommentCooldownTimeLeft();
+    if (leftTime > 0 && !isSpecial) {
+      setCommentError(`Подождите ещё ${leftTime} сек. перед комментированием!`);
+      return;
+    }
+
+    const newComment = {
+      id: Date.now().toString(),
+      author: nickname,
+      text: trimmed,
+      date: new Date().toISOString(),
+      parentId,
+      replyToAuthor,
+    };
+
+    const updatedComments = [...(card.comments || []), newComment];
+    onUpdateCard({
+      ...card,
+      comments: updatedComments,
+    });
+
+    // Record last comment time
+    if (!isSpecial) {
+      localStorage.setItem('shame_last_comment_time', Date.now().toString());
+      setCommentCooldownLeft(theme.commentCooldown ?? 15);
+    }
+    setCommentError(null);
+  };
+
+  const handleStartEdit = (commentId: string, text: string) => {
+    setEditingCommentId(commentId);
+    setEditingText(text);
+  };
+
+  const handleSaveEdit = (commentId: string) => {
+    const trimmed = editingText.trim();
+    if (!trimmed || !card.comments) return;
+    const updatedComments = card.comments.map(c => {
+      if (c.id === commentId) {
+        return { ...c, text: trimmed };
+      }
+      return c;
+    });
+    onUpdateCard({
+      ...card,
+      comments: updatedComments,
+    });
+    setEditingCommentId(null);
+    setEditingText('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCommentId(null);
+    setEditingText('');
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    if (!card.comments) return;
+    // Filter out the deleted comment and its sub-replies
+    const updatedComments = card.comments.filter(c => c.id !== commentId && c.parentId !== commentId);
+    onUpdateCard({
+      ...card,
+      comments: updatedComments,
+    });
+  };
 
   const formatSecs = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -60,6 +168,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
     let count = 5;
 
     if (type === 'tomatoes') {
+      playTomatoSound();
       count = 8;
       // Also spawn splat on photo container
       const splatId = Date.now();
@@ -71,7 +180,12 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
       }, 2500);
     }
 
+    if (type === 'facepalms') {
+      playFacepalmSound();
+    }
+
     if (type === 'forgiven') {
+      playKickSound();
       // Trigger leg kick physical displacement state and id
       setIsKicking(true);
       setKickId((prev) => prev + 1);
@@ -170,21 +284,8 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
     <motion.div
       layout
       initial={{ opacity: 0, y: 20 }}
-      animate={
-        isKicking
-          ? {
-              x: [0, -45, 35, -25, 15, -5, 0],
-              y: [0, -15, 10, -5, 3, 0],
-              rotate: [0, -12, 10, -8, 5, -2, 0],
-              scale: [1, 1.05, 0.98, 1.02, 1],
-            }
-          : { opacity: 1, y: 0 }
-      }
-      transition={
-        isKicking
-          ? { duration: 0.6, ease: "easeOut" }
-          : { duration: 0.3 }
-      }
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
       exit={{ opacity: 0, scale: 0.95 }}
       whileHover={isKicking ? {} : { y: -4, transition: { duration: 0.2 } }}
       style={{
@@ -193,9 +294,27 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
         color: theme.textColor,
         ...getBorderStyle(),
       }}
-      className={`relative overflow-hidden transition-all duration-300 shadow-xl flex flex-col h-full ${getFontClass()}`}
+      className={`relative overflow-hidden shadow-xl flex flex-col h-full ${getFontClass()}`}
       id={`shame-card-${card.id}`}
     >
+      <motion.div
+        className="w-full h-full flex flex-col relative"
+        animate={
+          isKicking
+            ? {
+                x: [0, -25, 20, -15, 10, -4, 0],
+                y: [0, -10, 8, -5, 3, 0],
+                rotate: [0, -6, 5, -3, 2, 0],
+                scale: [1, 1.03, 0.99, 1.01, 1],
+              }
+            : { x: 0, y: 0, rotate: 0, scale: 1 }
+        }
+        transition={
+          isKicking
+            ? { duration: 0.6, ease: "easeOut" }
+            : { duration: 0.3 }
+        }
+      >
       {/* Physical giant leg kick comic animation overlay */}
       <AnimatePresence>
         {isKicking && (
@@ -449,8 +568,316 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
               <span className="text-sm font-bold mt-1 text-indigo-300 font-mono">{card.forgiven}</span>
             </button>
           </div>
+
+          {/* Comments Toggle Button */}
+          <div className="mt-4 pt-3.5 border-t border-zinc-800/25 flex items-center justify-between text-xs font-mono">
+            <button
+              onClick={() => setShowComments(!showComments)}
+              style={{ color: showComments ? theme.accentColor : 'inherit' }}
+              className="flex items-center gap-1.5 font-bold hover:opacity-85 cursor-pointer transition-all uppercase tracking-wider text-[11px]"
+              id={`toggle-comments-${card.id}`}
+            >
+              <span>💬</span>
+              <span>
+                {showComments ? 'Скрыть комменты' : `Комменты (${card.comments?.length || 0})`}
+              </span>
+            </button>
+          </div>
+
+          {/* Collapsible Comments Tray with nested replies support */}
+          <AnimatePresence>
+            {showComments && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.22, ease: 'easeInOut' }}
+                className="mt-3 space-y-3 overflow-hidden"
+              >
+                {/* List of comments */}
+                <div className="max-h-52 overflow-y-auto space-y-2 pr-1 text-left">
+                  {(!card.comments || card.comments.length === 0) ? (
+                    <p className="text-[10px] text-zinc-500 italic text-center py-2 font-sans">
+                      Ещё никто не порицал. Напишите первый коммент!
+                    </p>
+                  ) : (
+                    card.comments
+                      .filter(com => !com.parentId) // Top-level
+                      .map(rootCom => {
+                        const replies = card.comments!.filter(reply => reply.parentId === rootCom.id);
+                        return (
+                          <div key={rootCom.id} className="space-y-1.5 border-b border-zinc-800/10 pb-2 last:border-none">
+                            {/* Top level comment */}
+                            <div className="bg-black/10 p-2 rounded-lg border border-zinc-800/20 relative">
+                              <div className="flex items-center justify-between mb-0.5">
+                                <span className="font-bold text-[10px] text-white flex items-center gap-1 font-mono">
+                                  {rootCom.author}
+                                  {['terramata', 'mad'].includes(rootCom.author.toLowerCase().trim()) && (
+                                    <span className="text-[7px] tracking-wide bg-red-500/10 text-red-500 px-1 py-px rounded border border-red-500/20 font-black">ADMIN</span>
+                                  )}
+                                </span>
+                                <span className="text-[8px] text-zinc-500 font-mono">
+                                  {new Date(rootCom.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              {editingCommentId === rootCom.id ? (
+                                <div className="space-y-1.5 mt-1">
+                                  <input
+                                    type="text"
+                                    value={editingText}
+                                    onChange={(e) => setEditingText(e.target.value)}
+                                    className="w-full bg-zinc-950 border border-zinc-800 px-2 py-1.5 rounded-lg text-[11px] text-white focus:outline-none focus:border-red-500 font-sans"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleSaveEdit(rootCom.id);
+                                      if (e.key === 'Escape') handleCancelEdit();
+                                    }}
+                                  />
+                                  <div className="flex justify-end gap-1.5">
+                                    <button
+                                      onClick={handleCancelEdit}
+                                      className="px-2 py-0.5 text-[8px] font-bold uppercase rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 cursor-pointer"
+                                    >
+                                      Отмена
+                                    </button>
+                                    <button
+                                      onClick={() => handleSaveEdit(rootCom.id)}
+                                      className="px-2 py-0.5 text-[8px] font-bold uppercase rounded bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer"
+                                    >
+                                      Сохранить
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-zinc-300 font-sans break-words bg-transparent">{rootCom.text}</p>
+                              )}
+                              
+                              {/* Reply Trigger & Actions */}
+                              <div className="mt-1 flex items-center justify-end gap-2.5">
+                                <button
+                                  onClick={() => handleStartEdit(rootCom.id, rootCom.text)}
+                                  className="text-[9px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
+                                  title="Редактировать"
+                                >
+                                  <Edit3 size={9} /> Редактировать
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteComment(rootCom.id)}
+                                  className="text-[9px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
+                                  title="Удалить"
+                                >
+                                  <Trash2 size={9} /> Удалить
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (replyingToId === rootCom.id) {
+                                      setReplyingToId(null);
+                                    } else {
+                                      setReplyingToId(rootCom.id);
+                                      setReplyText('');
+                                    }
+                                  }}
+                                  className="text-[9px] text-zinc-500 hover:text-zinc-300 cursor-pointer bg-transparent border-none font-semibold"
+                                >
+                                  {replyingToId === rootCom.id ? 'Отмена' : 'Ответить'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Reply Form for Top Level */}
+                            {replyingToId === rootCom.id && (
+                              <div className="ml-4 flex gap-1.5 items-center">
+                                <input
+                                  type="text"
+                                  disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                                  placeholder={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())
+                                    ? `Охлаждение... (${commentCooldownLeft}s)`
+                                    : `Ответить ${rootCom.author}...`}
+                                  value={replyText}
+                                  onChange={(e) => setReplyText(e.target.value)}
+                                  className="flex-grow bg-zinc-950/80 border border-zinc-800 px-2 py-1 rounded text-[11px] text-white focus:outline-none focus:border-red-500 placeholder-zinc-600 font-sans disabled:opacity-50"
+                                />
+                                <button
+                                  disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                                  onClick={() => {
+                                    if (replyText.trim()) {
+                                      handleAddComment(replyText, rootCom.id, rootCom.author);
+                                      setReplyText('');
+                                      setReplyingToId(null);
+                                    }
+                                  }}
+                                  className="px-2 py-1 rounded bg-red-650 hover:bg-red-700 text-[9px] text-white font-bold uppercase shrink-0 cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500"
+                                >
+                                  ОК
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Indented Replies */}
+                            {replies.length > 0 && (
+                              <div className="ml-4 pl-2 border-l border-zinc-800/40 space-y-1">
+                                {replies.map(reply => (
+                                  <div key={reply.id} className="bg-black/20 p-1.5 rounded border border-zinc-850/10 relative">
+                                    <div className="flex items-center justify-between mb-0.5">
+                                      <span className="font-semibold text-[9px] text-zinc-300 flex items-center gap-1 font-mono flex-wrap">
+                                        <span>{reply.author}</span>
+                                        {reply.replyToAuthor && (
+                                          <>
+                                            <span className="text-[8px] text-zinc-500 font-normal">→</span>
+                                            <span className="text-[8px] text-zinc-400 font-bold bg-zinc-800/60 px-1 rounded">{reply.replyToAuthor}</span>
+                                          </>
+                                        )}
+                                        {['terramata', 'mad'].includes(reply.author.toLowerCase().trim()) && (
+                                          <span className="text-[6px] tracking-wider bg-red-500/10 text-red-500 px-0.5 rounded border border-red-500/20 font-black">ADMIN</span>
+                                        )}
+                                      </span>
+                                      <span className="text-[7px] text-zinc-500 font-mono">
+                                        {new Date(reply.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    </div>
+                                    {editingCommentId === reply.id ? (
+                                      <div className="space-y-1.5 mt-1">
+                                        <input
+                                          type="text"
+                                          value={editingText}
+                                          onChange={(e) => setEditingText(e.target.value)}
+                                          className="w-full bg-zinc-950 border border-zinc-850 px-2 py-1 rounded text-[10px] text-white focus:outline-none focus:border-red-500 font-sans"
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveEdit(reply.id);
+                                            if (e.key === 'Escape') handleCancelEdit();
+                                          }}
+                                        />
+                                        <div className="flex justify-end gap-1.5">
+                                          <button
+                                            onClick={handleCancelEdit}
+                                            className="px-1.5 py-0.5 text-[7px] font-bold uppercase rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 cursor-pointer"
+                                          >
+                                            Отмена
+                                          </button>
+                                          <button
+                                            onClick={() => handleSaveEdit(reply.id)}
+                                            className="px-1.5 py-0.5 text-[7px] font-bold uppercase rounded bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer"
+                                          >
+                                            Сохранить
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <p className="text-[10px] text-zinc-400 font-sans break-words bg-transparent">{reply.text}</p>
+                                    )}
+                                    
+                                    {/* Action buttons to edit, delete and reply */}
+                                    <div className="mt-1 flex items-center justify-end gap-2.5">
+                                      <button
+                                        onClick={() => handleStartEdit(reply.id, reply.text)}
+                                        className="text-[8px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
+                                        title="Редактировать"
+                                      >
+                                        <Edit3 size={8} /> Изменить
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteComment(reply.id)}
+                                        className="text-[8px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
+                                        title="Удалить"
+                                      >
+                                        <Trash2 size={8} /> Удалить
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (replyingToId === reply.id) {
+                                            setReplyingToId(null);
+                                          } else {
+                                            setReplyingToId(reply.id);
+                                            setReplyText('');
+                                          }
+                                        }}
+                                        className="text-[8px] text-zinc-500 hover:text-zinc-300 cursor-pointer bg-transparent border-none font-semibold"
+                                      >
+                                        {replyingToId === reply.id ? 'Отмена' : 'Ответить'}
+                                      </button>
+                                    </div>
+
+                                    {/* Sub-reply input form */}
+                                    {replyingToId === reply.id && (
+                                      <div className="mt-1.5 flex gap-1 items-center">
+                                        <input
+                                          type="text"
+                                          disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                                          placeholder={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())
+                                            ? `Охлаждение... (${commentCooldownLeft}s)`
+                                            : `Ответить ${reply.author}...`}
+                                          value={replyText}
+                                          onChange={(e) => setReplyText(e.target.value)}
+                                          className="flex-grow bg-zinc-950 border border-zinc-800 px-1.5 py-0.5 rounded text-[10px] text-white focus:outline-none focus:border-red-500 placeholder-zinc-650 font-sans disabled:opacity-50"
+                                        />
+                                        <button
+                                          disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                                          onClick={() => {
+                                            if (replyText.trim()) {
+                                              // We pass rootCom.id as parentId to keep it inside this thread, and target sub-author
+                                              handleAddComment(replyText, rootCom.id, reply.author);
+                                              setReplyText('');
+                                              setReplyingToId(null);
+                                            }
+                                          }}
+                                          className="px-1.5 py-0.5 rounded bg-red-650 hover:bg-red-700 text-[8px] text-white font-bold uppercase shrink-0 cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500"
+                                        >
+                                          ОК
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+
+                {/* Root New Comment Form input */}
+                <div className="flex flex-col gap-1 pt-2 border-t border-zinc-850/40">
+                  {commentError && (
+                    <p className="text-[10px] text-red-500 font-medium font-mono mb-1">{commentError}</p>
+                  )}
+                  <div className="flex gap-1.5 items-center">
+                    <input
+                      type="text"
+                      disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                      placeholder={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())
+                        ? `Охлаждение комментов... (${commentCooldownLeft}s)`
+                        : "Написать порицание..."}
+                      value={newCommentText}
+                      onChange={(e) => {
+                        setNewCommentText(e.target.value);
+                        setCommentError(null);
+                      }}
+                      className="flex-grow bg-zinc-950 border border-zinc-800 px-2 py-1.5 rounded-lg text-[11px] text-white focus:outline-none focus:border-red-500 placeholder-zinc-650 font-sans disabled:opacity-50"
+                      id={`input-new-comment-${card.id}`}
+                    />
+                    <button
+                      disabled={commentCooldownLeft > 0 && !['terramata', 'mad'].includes((localStorage.getItem('shame_user_nickname') || '').toLowerCase().trim())}
+                      onClick={() => {
+                        if (newCommentText.trim()) {
+                          handleAddComment(newCommentText);
+                          setNewCommentText('');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-red-650 hover:bg-red-700 text-[10px] text-white font-extrabold uppercase shrink-0 cursor-pointer font-mono disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500"
+                      id={`btn-post-comment-${card.id}`}
+                    >
+                      ОК
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
+      </motion.div>
     </motion.div>
   );
 };

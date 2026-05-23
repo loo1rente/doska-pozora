@@ -100,7 +100,7 @@ if (isPostgres) {
 const JSON_FILE_PATH = path.join(process.cwd(), 'shame_data_backup.json');
 
 // In-memory or file backing utils (Local JSON mode)
-function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null } {
+function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null; users?: { nickname: string; passwordHash: string }[] } {
   if (fs.existsSync(JSON_FILE_PATH)) {
     try {
       const data = fs.readFileSync(JSON_FILE_PATH, 'utf-8');
@@ -113,13 +113,26 @@ function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null } {
       console.error('Error reading local file database:', e);
     }
   }
-  return { cards: initialShameCards, theme: null };
+  return { cards: initialShameCards, theme: null, users: [] };
 }
 
-function saveLocalData(cards: ShameCard[], theme: ThemeSettings | null) {
+function saveLocalData(cards: ShameCard[], theme: ThemeSettings | null, users?: { nickname: string; passwordHash: string }[]) {
   try {
     const cleanCards = cards.filter(c => c.id !== '2' && c.id !== '3' && c.id !== '4');
-    fs.writeFileSync(JSON_FILE_PATH, JSON.stringify({ cards: cleanCards, theme }, null, 2), 'utf-8');
+    let existingUsers: { nickname: string; passwordHash: string }[] = [];
+    if (fs.existsSync(JSON_FILE_PATH)) {
+      try {
+        const fileContent = fs.readFileSync(JSON_FILE_PATH, 'utf-8');
+        const parsed = JSON.parse(fileContent);
+        if (parsed && Array.isArray(parsed.users)) {
+          existingUsers = parsed.users;
+        }
+      } catch (e) {
+        // Ignored
+      }
+    }
+    const finalUsers = users || existingUsers;
+    fs.writeFileSync(JSON_FILE_PATH, JSON.stringify({ cards: cleanCards, theme, users: finalUsers }, null, 2), 'utf-8');
   } catch (e) {
     console.error('Error writing local file database:', e);
   }
@@ -149,10 +162,24 @@ export async function initializeDb() {
           date TEXT NOT NULL,
           tomatoes INTEGER DEFAULT 0,
           facepalms INTEGER DEFAULT 0,
-          forgiven INTEGER DEFAULT 0
+          forgiven INTEGER DEFAULT 0,
+          comments TEXT DEFAULT '[]'
         )
       `);
-      console.log('Table "shame_cards" verified/created.');
+      // Ensure column exists for schema updates
+      await dbClient.query(`
+        ALTER TABLE shame_cards ADD COLUMN IF NOT EXISTS comments TEXT DEFAULT '[]'
+      `);
+      console.log('Table "shame_cards" verified/created with comments column.');
+
+      // Create shame_users table for authenticating user names
+      await dbClient.query(`
+        CREATE TABLE IF NOT EXISTS shame_users (
+          nickname TEXT PRIMARY KEY,
+          password TEXT NOT NULL
+        )
+      `);
+      console.log('Table "shame_users" verified/created.');
 
       // Delete old seeding records to ensure they are cleared
       await dbClient.query("DELETE FROM shame_cards WHERE id IN ('2', '3', '4')");
@@ -174,7 +201,7 @@ export async function initializeDb() {
   } else {
     // Local File Mode Setup check
     let data = loadLocalData();
-    saveLocalData(data.cards, data.theme);
+    saveLocalData(data.cards, data.theme, data.users);
     console.log('Local File Database (shame_data_backup.json) initialized.');
   }
 }
@@ -200,18 +227,29 @@ export async function getAllCards(): Promise<ShameCard[]> {
   if (!dbSuccess && isPostgres && pool) {
     try {
       const res = await pool.query('SELECT * FROM shame_cards');
-      dbCards = res.rows.map(row => ({
-        id: row.id,
-        name: row.name,
-        description: row.description,
-        photoUrl: row.photo_url,
-        category: row.category,
-        severity: row.severity,
-        date: row.date,
-        tomatoes: Number(row.tomatoes),
-        facepalms: Number(row.facepalms),
-        forgiven: Number(row.forgiven)
-      }));
+      dbCards = res.rows.map(row => {
+        let parsedComments = [];
+        try {
+          if (row.comments) {
+            parsedComments = typeof row.comments === 'string' ? JSON.parse(row.comments) : row.comments;
+          }
+        } catch (e) {
+          console.error(`Failed to parse comments for row ${row.id}:`, e);
+        }
+        return {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          photoUrl: row.photo_url,
+          category: row.category,
+          severity: row.severity,
+          date: row.date,
+          tomatoes: Number(row.tomatoes),
+          facepalms: Number(row.facepalms),
+          forgiven: Number(row.forgiven),
+          comments: parsedComments
+        };
+      });
       dbSuccess = true;
     } catch (e) {
       console.error('Postgres list error, using local JSON fallback:', e);
@@ -239,6 +277,7 @@ export async function getAllCards(): Promise<ShameCard[]> {
         tomatoes: Math.max(existing.tomatoes || 0, card.tomatoes || 0),
         facepalms: Math.max(existing.facepalms || 0, card.facepalms || 0),
         forgiven: Math.max(existing.forgiven || 0, card.forgiven || 0),
+        comments: card.comments && card.comments.length > 0 ? card.comments : (existing.comments || [])
       };
       mergedMap.set(card.id, merged);
     } else {
@@ -267,10 +306,20 @@ export async function getAllCards(): Promise<ShameCard[]> {
 
 // Add card
 export async function addCard(card: ShameCard): Promise<void> {
-  // Enforce Max Limit of 100 on all reactions to prevent spamming/vandalism
-  card.tomatoes = Math.min(100, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
-  card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
-  card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
+  let maxLimit = 100;
+  try {
+    const actTheme = await getActiveTheme();
+    if (actTheme && typeof actTheme.maxReactionsLimit === 'number') {
+      maxLimit = actTheme.maxReactionsLimit;
+    }
+  } catch (e) {
+    console.warn('Failed to load dynamic limit for addCard:', e);
+  }
+
+  // Enforce Dynamic Max Limit or Fallback
+  card.tomatoes = Math.min(maxLimit, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
+  card.facepalms = Math.min(maxLimit, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
+  card.forgiven = Math.min(maxLimit, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
 
   // 1. Write to Firestore
   if (db) {
@@ -286,12 +335,13 @@ export async function addCard(card: ShameCard): Promise<void> {
   if (isPostgres && pool) {
     try {
       await pool.query(`
-        INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven, comments)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (id) DO UPDATE 
         SET name = EXCLUDED.name, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, 
             category = EXCLUDED.category, severity = EXCLUDED.severity, date = EXCLUDED.date, 
-            tomatoes = EXCLUDED.tomatoes, facepalms = EXCLUDED.facepalms, forgiven = EXCLUDED.forgiven
+            tomatoes = EXCLUDED.tomatoes, facepalms = EXCLUDED.facepalms, forgiven = EXCLUDED.forgiven,
+            comments = EXCLUDED.comments
       `, [
         card.id,
         card.name,
@@ -302,7 +352,8 @@ export async function addCard(card: ShameCard): Promise<void> {
         card.date,
         card.tomatoes,
         card.facepalms,
-        card.forgiven
+        card.forgiven,
+        JSON.stringify(card.comments || [])
       ]);
     } catch (e) {
       console.error('Postgres write error in addCard:', e);
@@ -318,10 +369,20 @@ export async function addCard(card: ShameCard): Promise<void> {
 
 // Update card
 export async function updateCard(card: ShameCard): Promise<void> {
-  // Enforce Max Limit of 100 on all reactions to prevent spamming/vandalism
-  card.tomatoes = Math.min(100, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
-  card.facepalms = Math.min(100, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
-  card.forgiven = Math.min(100, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
+  let maxLimit = 100;
+  try {
+    const actTheme = await getActiveTheme();
+    if (actTheme && typeof actTheme.maxReactionsLimit === 'number') {
+      maxLimit = actTheme.maxReactionsLimit;
+    }
+  } catch (e) {
+    console.warn('Failed to load dynamic limit for updateCard:', e);
+  }
+
+  // Enforce Dynamic Max Limit or Fallback
+  card.tomatoes = Math.min(maxLimit, Math.max(0, typeof card.tomatoes === 'number' ? card.tomatoes : 0));
+  card.facepalms = Math.min(maxLimit, Math.max(0, typeof card.facepalms === 'number' ? card.facepalms : 0));
+  card.forgiven = Math.min(maxLimit, Math.max(0, typeof card.forgiven === 'number' ? card.forgiven : 0));
 
   // 1. Write to Firestore
   if (db) {
@@ -338,7 +399,7 @@ export async function updateCard(card: ShameCard): Promise<void> {
     try {
       await pool.query(`
         UPDATE shame_cards
-        SET name = $2, description = $3, photo_url = $4, category = $5, severity = $6, date = $7, tomatoes = $8, facepalms = $9, forgiven = $10
+        SET name = $2, description = $3, photo_url = $4, category = $5, severity = $6, date = $7, tomatoes = $8, facepalms = $9, forgiven = $10, comments = $11
         WHERE id = $1
       `, [
         card.id,
@@ -350,7 +411,8 @@ export async function updateCard(card: ShameCard): Promise<void> {
         card.date,
         card.tomatoes,
         card.facepalms,
-        card.forgiven
+        card.forgiven,
+        JSON.stringify(card.comments || [])
       ]);
     } catch (e) {
       console.error('Postgres write error in updateCard:', e);
@@ -457,4 +519,126 @@ export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
   const data = loadLocalData();
   data.theme = theme;
   saveLocalData(data.cards, data.theme);
+}
+
+// Authenticate / Register a user with a secure password
+export async function authenticateUser(nickname: string, passwordPlain: string): Promise<{ success: boolean; isNewUser: boolean; message: string }> {
+  const normNick = nickname.trim().toLowerCase();
+  if (!normNick) {
+    return { success: false, isNewUser: false, message: "Никнейм не может быть пустым" };
+  }
+
+  // 1. Попробуем найти в Firestore
+  let foundUser: { nickname: string; passwordHash: string } | null = null;
+  let dbSuccess = false;
+
+  if (db) {
+    try {
+      const docRef = doc(db, 'shame_users', normNick);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        foundUser = docSnap.data() as { nickname: string; passwordHash: string };
+      }
+      dbSuccess = true;
+    } catch (e) {
+      console.error('Firestore get error in authenticateUser:', e);
+    }
+  }
+
+  // 2. Иначе попробуем в Postgres
+  if (!dbSuccess && isPostgres && pool) {
+    try {
+      const res = await pool.query('SELECT password FROM shame_users WHERE nickname = $1', [normNick]);
+      if (res.rows.length > 0) {
+        foundUser = {
+          nickname: normNick,
+          passwordHash: res.rows[0].password
+        };
+      }
+      dbSuccess = true;
+    } catch (e) {
+      console.error('Postgres error in authenticateUser:', e);
+    }
+  }
+
+  // 3. Работа с локальным JSON резервного копирования
+  const localData = loadLocalData() as any;
+  if (!localData.users) {
+    localData.users = [];
+  }
+  const localUser = localData.users.find((u: any) => u.nickname.toLowerCase() === normNick);
+
+  if (!foundUser && localUser) {
+    foundUser = localUser;
+  }
+
+  // Если пользователя не существует, это РЕГИСТРАЦИЯ
+  if (!foundUser) {
+    const passTrimmed = passwordPlain.trim();
+    if (!passTrimmed) {
+      return { 
+        success: false, 
+        isNewUser: true, 
+        message: "Этот никнейм свободен! Пожалуйста, задайте для него пароль при регистрации." 
+      };
+    }
+
+    const newUser = {
+      nickname: normNick,
+      passwordHash: passTrimmed
+    };
+
+    // Сохранить в Firestore
+    if (db) {
+      try {
+        const docRef = doc(db, 'shame_users', normNick);
+        await setDoc(docRef, newUser);
+      } catch (e) {
+        console.error('Firestore save error in authenticateUser:', e);
+      }
+    }
+
+    // Сохранить в Postgres
+    if (isPostgres && pool) {
+      try {
+        await pool.query(`
+          INSERT INTO shame_users (nickname, password)
+          VALUES ($1, $2)
+          ON CONFLICT (nickname) DO NOTHING
+        `, [newUser.nickname, newUser.passwordHash]);
+      } catch (e) {
+        console.error('Postgres insert error in authenticateUser:', e);
+      }
+    }
+
+    // Сохранить в локальный файл
+    localData.users.push(newUser);
+    saveLocalData(localData.cards, localData.theme, localData.users);
+
+    return { 
+      success: true, 
+      isNewUser: true, 
+      message: "Никнейм успешно зарегистрирован и закреплен за вами!" 
+    };
+  }
+
+  // Если пользователь существует, проверяем пароль
+  if (foundUser.passwordHash === passwordPlain.trim()) {
+    // Синхронизируем локально если нужно
+    if (!localUser) {
+      localData.users.push(foundUser);
+      saveLocalData(localData.cards, localData.theme, localData.users);
+    }
+    return { 
+      success: true, 
+      isNewUser: false, 
+      message: "Вход успешно выполнен!" 
+    };
+  } else {
+    return { 
+      success: false, 
+      isNewUser: false, 
+      message: "Этот никнейм уже зарегистрирован. Пожалуйста, введите правильный пароль от вашего никнейма, чтобы войти!" 
+    };
+  }
 }

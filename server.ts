@@ -13,8 +13,10 @@ import {
   updateCard,
   deleteCard,
   getActiveTheme,
-  saveActiveTheme
+  saveActiveTheme,
+  authenticateUser
 } from "./server_db";
+import { initTelegramBot } from "./telegram_bot";
 
 async function startServer() {
   const app = express();
@@ -26,7 +28,24 @@ async function startServer() {
   // Initialize DB tables (or local files)
   await initializeDb();
 
+  // Initialize the Telegram Bot listener
+  initTelegramBot().catch((err) => {
+    console.error("Failed to initialize Telegram Bot:", err);
+  });
+
   // API endpoints FIRST
+
+  // Auth login/register
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { nickname, password } = req.body;
+      const outcome = await authenticateUser(nickname, password);
+      res.json(outcome);
+    } catch (err) {
+      console.error("Auth server error:", err);
+      res.status(500).json({ success: false, message: "Внутренняя ошибка сервера при аутентификации." });
+    }
+  });
 
   // Get active theme settings
   app.get("/api/theme", async (req, res) => {
@@ -87,14 +106,17 @@ async function startServer() {
 
           const now = Date.now();
           const lastTime = lastReactionTimeByIp.get(ip) || 0;
-          const waitTime = 15 * 60 * 1000; // 15 minutes
+          
+          const currentTheme = await getActiveTheme();
+          const cooldownSecs = currentTheme?.reactionCooldown ?? 30;
+          const waitTime = cooldownSecs * 1000;
 
           if (now - lastTime < waitTime) {
             const secsLeft = Math.ceil((waitTime - (now - lastTime)) / 1000);
             return res.status(429).json({
               error: "Too Many Requests",
               retryAfter: secsLeft,
-              message: `Лимит превышен. Пожалуйста, подождите ещё ${Math.floor(secsLeft / 60)} мин.`
+              message: `Лимит превышен. Пожалуйста, подождите ещё ${secsLeft} сек.`
             });
           }
 
