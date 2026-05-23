@@ -110,12 +110,22 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
     setCommentError(null);
   };
 
+  const canManageComment = (author: string) => {
+    const nickname = (localStorage.getItem('shame_user_nickname') || 'Фигурант').toLowerCase().trim();
+    const isAdmin = ['terramata', 'mad'].includes(nickname);
+    return isAdmin || nickname === author.toLowerCase().trim();
+  };
+
   const handleStartEdit = (commentId: string, text: string) => {
+    const comment = card.comments?.find(c => c.id === commentId);
+    if (!comment || !canManageComment(comment.author)) return;
     setEditingCommentId(commentId);
     setEditingText(text);
   };
 
   const handleSaveEdit = (commentId: string) => {
+    const comment = card.comments?.find(c => c.id === commentId);
+    if (!comment || !canManageComment(comment.author)) return;
     const trimmed = editingText.trim();
     if (!trimmed || !card.comments) return;
     const updatedComments = card.comments.map(c => {
@@ -138,6 +148,8 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
   };
 
   const handleDeleteComment = (commentId: string) => {
+    const comment = card.comments?.find(c => c.id === commentId);
+    if (!comment || !canManageComment(comment.author)) return;
     if (!card.comments) return;
     // Filter out the deleted comment and its sub-replies
     const updatedComments = card.comments.filter(c => c.id !== commentId && c.parentId !== commentId);
@@ -654,20 +666,24 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
                               
                               {/* Reply Trigger & Actions */}
                               <div className="mt-1 flex items-center justify-end gap-2.5">
-                                <button
-                                  onClick={() => handleStartEdit(rootCom.id, rootCom.text)}
-                                  className="text-[9px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
-                                  title="Редактировать"
-                                >
-                                  <Edit3 size={9} /> Редактировать
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteComment(rootCom.id)}
-                                  className="text-[9px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
-                                  title="Удалить"
-                                >
-                                  <Trash2 size={9} /> Удалить
-                                </button>
+                                {canManageComment(rootCom.author) && (
+                                  <>
+                                    <button
+                                      onClick={() => handleStartEdit(rootCom.id, rootCom.text)}
+                                      className="text-[9px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
+                                      title="Редактировать"
+                                    >
+                                      <Edit3 size={9} /> Редактировать
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteComment(rootCom.id)}
+                                      className="text-[9px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
+                                      title="Удалить"
+                                    >
+                                      <Trash2 size={9} /> Удалить
+                                    </button>
+                                  </>
+                                )}
                                 <button
                                   onClick={() => {
                                     if (replyingToId === rootCom.id) {
@@ -769,20 +785,24 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
                                     
                                     {/* Action buttons to edit, delete and reply */}
                                     <div className="mt-1 flex items-center justify-end gap-2.5">
-                                      <button
-                                        onClick={() => handleStartEdit(reply.id, reply.text)}
-                                        className="text-[8px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
-                                        title="Редактировать"
-                                      >
-                                        <Edit3 size={8} /> Изменить
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteComment(reply.id)}
-                                        className="text-[8px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
-                                        title="Удалить"
-                                      >
-                                        <Trash2 size={8} /> Удалить
-                                      </button>
+                                      {canManageComment(reply.author) && (
+                                        <>
+                                          <button
+                                            onClick={() => handleStartEdit(reply.id, reply.text)}
+                                            className="text-[8px] text-zinc-550 hover:text-zinc-300 cursor-pointer flex items-center gap-0.5 font-semibold"
+                                            title="Редактировать"
+                                          >
+                                            <Edit3 size={8} /> Изменить
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteComment(reply.id)}
+                                            className="text-[8px] text-red-500/70 hover:text-red-400 cursor-pointer flex items-center gap-0.5 font-semibold font-mono"
+                                            title="Удалить"
+                                          >
+                                            <Trash2 size={8} /> Удалить
+                                          </button>
+                                        </>
+                                      )}
                                       <button
                                         onClick={() => {
                                           if (replyingToId === reply.id) {
