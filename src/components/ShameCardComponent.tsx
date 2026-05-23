@@ -87,9 +87,17 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
       return;
     }
 
+    // Secure user session ID initialization if missing
+    let currentUserId = localStorage.getItem('shame_user_id');
+    if (!currentUserId) {
+      currentUserId = 'usr_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('shame_user_id', currentUserId);
+    }
+
     const newComment = {
       id: Date.now().toString(),
       author: nickname,
+      authorId: currentUserId,
       text: trimmed,
       date: new Date().toISOString(),
       parentId,
@@ -110,22 +118,36 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
     setCommentError(null);
   };
 
-  const canManageComment = (author: string) => {
+  const canManageComment = (comment: { author: string; authorId?: string }) => {
     const nickname = (localStorage.getItem('shame_user_nickname') || 'Фигурант').toLowerCase().trim();
-    const isAdmin = ['terramata', 'mad'].includes(nickname);
-    return isAdmin || nickname === author.toLowerCase().trim();
+    const isAdmin = ['terramata', 'mad'].includes(nickname) || localStorage.getItem('shame_admin_auth') === 'true';
+    if (isAdmin) return true;
+
+    // Secure user session ID check
+    let currentUserId = localStorage.getItem('shame_user_id');
+    if (!currentUserId) {
+      currentUserId = 'usr_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('shame_user_id', currentUserId);
+    }
+
+    if (comment.authorId) {
+      return comment.authorId === currentUserId;
+    }
+
+    // Fallback for legacy comments
+    return nickname === comment.author.toLowerCase().trim();
   };
 
   const handleStartEdit = (commentId: string, text: string) => {
     const comment = card.comments?.find(c => c.id === commentId);
-    if (!comment || !canManageComment(comment.author)) return;
+    if (!comment || !canManageComment(comment)) return;
     setEditingCommentId(commentId);
     setEditingText(text);
   };
 
   const handleSaveEdit = (commentId: string) => {
     const comment = card.comments?.find(c => c.id === commentId);
-    if (!comment || !canManageComment(comment.author)) return;
+    if (!comment || !canManageComment(comment)) return;
     const trimmed = editingText.trim();
     if (!trimmed || !card.comments) return;
     const updatedComments = card.comments.map(c => {
@@ -149,7 +171,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
 
   const handleDeleteComment = (commentId: string) => {
     const comment = card.comments?.find(c => c.id === commentId);
-    if (!comment || !canManageComment(comment.author)) return;
+    if (!comment || !canManageComment(comment)) return;
     if (!card.comments) return;
     // Filter out the deleted comment and its sub-replies
     const updatedComments = card.comments.filter(c => c.id !== commentId && c.parentId !== commentId);
@@ -666,7 +688,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
                               
                               {/* Reply Trigger & Actions */}
                               <div className="mt-1 flex items-center justify-end gap-2.5">
-                                {canManageComment(rootCom.author) && (
+                                {canManageComment(rootCom) && (
                                   <>
                                     <button
                                       onClick={() => handleStartEdit(rootCom.id, rootCom.text)}
@@ -785,7 +807,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
                                     
                                     {/* Action buttons to edit, delete and reply */}
                                     <div className="mt-1 flex items-center justify-end gap-2.5">
-                                      {canManageComment(reply.author) && (
+                                      {canManageComment(reply) && (
                                         <>
                                           <button
                                             onClick={() => handleStartEdit(reply.id, reply.text)}

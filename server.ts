@@ -83,7 +83,10 @@ async function startServer() {
       const card = req.body;
       await addCard(card);
       res.status(201).json({ success: true, card });
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.message?.includes("CARD_DELETED")) {
+        return res.status(410).json({ error: "CARD_DELETED", message: "This card has been deleted and cannot be added again." });
+      }
       res.status(500).json({ error: "Failed to create infraction card" });
     }
   });
@@ -127,7 +130,10 @@ async function startServer() {
 
       await updateCard(card);
       res.json({ success: true, card });
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.message?.includes("CARD_DELETED")) {
+        return res.status(410).json({ error: "CARD_DELETED", message: "This card has been deleted and cannot be updated." });
+      }
       res.status(500).json({ error: "Failed to update infraction card" });
     }
   });

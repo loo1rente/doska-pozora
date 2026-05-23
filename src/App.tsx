@@ -117,39 +117,6 @@ export default function App() {
         if (Array.isArray(data)) {
           const filtered = data;
           
-          // If the server returns no cards, but we have some local cards saved in localStorage,
-          // we automatically upload them to the server so they get backed up into the Firestore/Postgres DB!
-          if (filtered.length === 0 && !hasUploadedLocalRef.current) {
-            const localSaved = localStorage.getItem('shame_cards_data');
-            if (localSaved) {
-              try {
-                const parsed = JSON.parse(localSaved);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  console.log('Database is empty. Automatically backing up/uploading local cards to server...', parsed);
-                  hasUploadedLocalRef.current = true;
-                  // Send each card to the server
-                  Promise.all(
-                    parsed.map((card) =>
-                      fetch('/api/cards', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(card),
-                      })
-                    )
-                  )
-                    .then(() => {
-                      console.log('Successfully backed up local cards to Firebase database!');
-                      syncCards(); // Refresh data from server
-                    })
-                    .catch((err) => console.error('Error recovering cards to database:', err));
-                  return;
-                }
-              } catch (e) {
-                console.error('Error parsing local cards for recovery:', e);
-              }
-            }
-          }
-
           // Compare and only update state if actual reaction counts or length changed, prevents UI flicker
           setCards((prev) => {
             const prevJSON = JSON.stringify(prev);

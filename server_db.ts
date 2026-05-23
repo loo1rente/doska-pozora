@@ -100,7 +100,7 @@ if (isPostgres) {
 const JSON_FILE_PATH = path.join(process.cwd(), 'shame_data_backup.json');
 
 // In-memory or file backing utils (Local JSON mode)
-function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null; users?: { nickname: string; passwordHash: string }[] } {
+function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null; users?: { nickname: string; passwordHash: string }[]; deletedIds?: string[] } {
   if (fs.existsSync(JSON_FILE_PATH)) {
     try {
       const data = fs.readFileSync(JSON_FILE_PATH, 'utf-8');
@@ -113,26 +113,33 @@ function loadLocalData(): { cards: ShameCard[]; theme: ThemeSettings | null; use
       console.error('Error reading local file database:', e);
     }
   }
-  return { cards: initialShameCards, theme: null, users: [] };
+  return { cards: initialShameCards, theme: null, users: [], deletedIds: [] };
 }
 
-function saveLocalData(cards: ShameCard[], theme: ThemeSettings | null, users?: { nickname: string; passwordHash: string }[]) {
+function saveLocalData(cards: ShameCard[], theme: ThemeSettings | null, users?: { nickname: string; passwordHash: string }[], deletedIds?: string[]) {
   try {
     const cleanCards = cards.filter(c => c.id !== '2' && c.id !== '3' && c.id !== '4');
     let existingUsers: { nickname: string; passwordHash: string }[] = [];
+    let existingDeletedIds: string[] = [];
     if (fs.existsSync(JSON_FILE_PATH)) {
       try {
         const fileContent = fs.readFileSync(JSON_FILE_PATH, 'utf-8');
         const parsed = JSON.parse(fileContent);
-        if (parsed && Array.isArray(parsed.users)) {
-          existingUsers = parsed.users;
+        if (parsed) {
+          if (Array.isArray(parsed.users)) {
+            existingUsers = parsed.users;
+          }
+          if (Array.isArray(parsed.deletedIds)) {
+            existingDeletedIds = parsed.deletedIds;
+          }
         }
       } catch (e) {
         // Ignored
       }
     }
     const finalUsers = users || existingUsers;
-    fs.writeFileSync(JSON_FILE_PATH, JSON.stringify({ cards: cleanCards, theme, users: finalUsers }, null, 2), 'utf-8');
+    const finalDeletedIds = deletedIds || existingDeletedIds;
+    fs.writeFileSync(JSON_FILE_PATH, JSON.stringify({ cards: cleanCards, theme, users: finalUsers, deletedIds: finalDeletedIds }, null, 2), 'utf-8');
   } catch (e) {
     console.error('Error writing local file database:', e);
   }
@@ -194,6 +201,15 @@ export async function initializeDb() {
       `);
       console.log('Table "shame_theme" verified/created.');
 
+      // Create deleted_card_ids table to avoid resurrections
+      await dbClient.query(`
+        CREATE TABLE IF NOT EXISTS deleted_card_ids (
+          id TEXT PRIMARY KEY,
+          deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('Table "deleted_card_ids" verified/created.');
+
       dbClient.release();
     } catch (err) {
       console.error('Failed to initialize PostgreSQL. Falling back to local file model.', err);
@@ -203,6 +219,67 @@ export async function initializeDb() {
     let data = loadLocalData();
     saveLocalData(data.cards, data.theme, data.users);
     console.log('Local File Database (shame_data_backup.json) initialized.');
+  }
+}
+
+// Check if a card has been deleted to prevent client-side resurrecting/uploading of cached cards
+export async function isCardDeleted(id: string): Promise<boolean> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'deleted_card_ids', id);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        return true;
+      }
+    } catch (e) {
+      console.error('Firestore check isCardDeleted error:', e);
+    }
+  }
+
+  if (isPostgres && pool) {
+    try {
+      const res = await pool.query('SELECT 1 FROM deleted_card_ids WHERE id = $1', [id]);
+      if (res.rows.length > 0) {
+        return true;
+      }
+    } catch (e) {
+      console.error('Postgres check isCardDeleted error:', e);
+    }
+  }
+
+  const localData = loadLocalData() as any;
+  if (localData.deletedIds && localData.deletedIds.includes(id)) {
+    return true;
+  }
+  return false;
+}
+
+// Track a deleted card's ID
+export async function trackDeletedCardId(id: string): Promise<void> {
+  if (db) {
+    try {
+      const docRef = doc(db, 'deleted_card_ids', id);
+      await setDoc(docRef, { deletedAt: new Date().toISOString() });
+    } catch (e) {
+      console.error('Firestore trackDeletedCardId error:', e);
+    }
+  }
+
+  if (isPostgres && pool) {
+    try {
+      await pool.query('INSERT INTO deleted_card_ids (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [id]);
+    } catch (e) {
+      console.error('Postgres trackDeletedCardId error:', e);
+    }
+  }
+
+  const localData = loadLocalData() as any;
+  if (!localData.deletedIds) {
+    localData.deletedIds = [];
+  }
+  if (!localData.deletedIds.includes(id)) {
+    localData.deletedIds.push(id);
+    saveLocalData(localData.cards, localData.theme, localData.users, localData.deletedIds);
   }
 }
 
@@ -279,6 +356,10 @@ export async function getAllCards(): Promise<ShameCard[]> {
 
 // Add card
 export async function addCard(card: ShameCard): Promise<void> {
+  if (await isCardDeleted(card.id)) {
+    throw new Error(`CARD_DELETED: Card with ID ${card.id} has been deleted and cannot be resurrected.`);
+  }
+
   let maxLimit = 100;
   try {
     const actTheme = await getActiveTheme();
@@ -342,6 +423,10 @@ export async function addCard(card: ShameCard): Promise<void> {
 
 // Update card
 export async function updateCard(card: ShameCard): Promise<void> {
+  if (await isCardDeleted(card.id)) {
+    throw new Error(`CARD_DELETED: Card with ID ${card.id} has been deleted and cannot be updated.`);
+  }
+
   let maxLimit = 100;
   try {
     const actTheme = await getActiveTheme();
@@ -400,6 +485,9 @@ export async function updateCard(card: ShameCard): Promise<void> {
 
 // Delete card
 export async function deleteCard(id: string): Promise<void> {
+  // Track that this ID is deleted to prevent resurrecting/uploading from cached clients
+  await trackDeletedCardId(id);
+
   // 1. Delete from Firestore
   if (db) {
     try {

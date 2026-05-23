@@ -891,7 +891,7 @@ async function handleTelegramUpdate(token: string, update: any) {
     }
 
     if (callbackData.startsWith("set_font_")) {
-      const font = callbackData.replace("set_font_", "");
+      const font = callbackData.replace("set_font_", "") as "sans" | "mono" | "serif" | "grotesk";
       const actTheme = await getActiveTheme() || { ...PRESET_THEMES.artistic };
       actTheme.fontFamily = font;
       await saveActiveTheme(actTheme);
@@ -914,7 +914,7 @@ async function handleTelegramUpdate(token: string, update: any) {
     }
 
     if (callbackData.startsWith("set_columns_")) {
-      const cols = callbackData.replace("set_columns_", "");
+      const cols = callbackData.replace("set_columns_", "") as "2" | "3" | "4";
       const actTheme = await getActiveTheme() || { ...PRESET_THEMES.artistic };
       actTheme.gridColumns = cols;
       await saveActiveTheme(actTheme);
