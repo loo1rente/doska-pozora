@@ -260,45 +260,18 @@ export async function getAllCards(): Promise<ShameCard[]> {
   const localData = loadLocalData();
   const localCards = localData.cards;
 
-  // Merge dbCards and localCards by ID
-  const mergedMap = new Map<string, ShameCard>();
+  let finalCards: ShameCard[] = [];
 
-  // Insert local cards first
-  for (const card of localCards) {
-    mergedMap.set(card.id, card);
+  if (dbSuccess) {
+    // If database query succeeded, trust the database (Firestore/Postgres) as the single source of truth.
+    // This prevents deleted cards from being resurrected from local cache/replicas.
+    finalCards = dbCards;
+  } else {
+    // Fall back to local file backup if database is unreachable
+    finalCards = localCards;
   }
 
-  // Insert db cards, merging properties
-  for (const card of dbCards) {
-    const existing = mergedMap.get(card.id);
-    if (existing) {
-      const merged: ShameCard = {
-        ...card,
-        tomatoes: Math.max(existing.tomatoes || 0, card.tomatoes || 0),
-        facepalms: Math.max(existing.facepalms || 0, card.facepalms || 0),
-        forgiven: Math.max(existing.forgiven || 0, card.forgiven || 0),
-        comments: card.comments && card.comments.length > 0 ? card.comments : (existing.comments || [])
-      };
-      mergedMap.set(card.id, merged);
-    } else {
-      mergedMap.set(card.id, card);
-    }
-  }
-
-  const finalCards = Array.from(mergedMap.values());
-
-  // Self-heal: If Firestore succeeded but didn't have some cards that exist locally, upload them!
-  if (db && dbSuccess) {
-    for (const card of finalCards) {
-      const alreadyInDb = dbCards.some(dbC => dbC.id === card.id);
-      if (!alreadyInDb) {
-        const docRef = doc(db, 'shame_cards', card.id);
-        setDoc(docRef, card).catch((err) => console.error(`Self-heal write failed for ${card.id}:`, err));
-      }
-    }
-  }
-
-  // Also write the fully merged and synchronized list back to local FS so it is safely backed up
+  // Also write the fully synchronized list back to local FS so it is safely backed up
   saveLocalData(finalCards, localData.theme);
 
   return finalCards;
