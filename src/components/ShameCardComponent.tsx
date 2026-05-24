@@ -44,6 +44,7 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
 
   // Collapsible CommentsTray and Nested Reply States
   const [showComments, setShowComments] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [newCommentText, setNewCommentText] = useState('');
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -507,6 +508,20 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
           >
             {card.description}
           </p>
+
+          {/* Tags List */}
+          {card.tags && card.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2 relative z-10">
+              {card.tags.map((tag, tIdx) => (
+                <span
+                  key={tIdx}
+                  className="px-2 py-0.5 text-[10px] bg-red-550/10 rounded border border-red-500/20 text-red-400 font-bold uppercase tracking-wider font-mono scale-95 origin-left"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Date and interactive buttons */}
@@ -603,17 +618,35 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
             </button>
           </div>
 
-          {/* Comments Toggle Button */}
+          {/* Comments and History Toggle Row */}
           <div className="mt-4 pt-3.5 border-t border-zinc-800/25 flex items-center justify-between text-xs font-mono">
             <button
-              onClick={() => setShowComments(!showComments)}
+              onClick={() => {
+                setShowComments(!showComments);
+                setShowHistory(false);
+              }}
               style={{ color: showComments ? theme.accentColor : 'inherit' }}
               className="flex items-center gap-1.5 font-bold hover:opacity-85 cursor-pointer transition-all uppercase tracking-wider text-[11px]"
               id={`toggle-comments-${card.id}`}
             >
               <span>💬</span>
               <span>
-                {showComments ? 'Скрыть комменты' : `Комменты (${card.comments?.length || 0})`}
+                {showComments ? 'Показать косяк' : `Мнения (${card.comments?.length || 0})`}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setShowHistory(!showHistory);
+                setShowComments(false);
+              }}
+              style={{ color: showHistory ? theme.accentColor : 'inherit' }}
+              className="flex items-center gap-1.5 font-bold hover:opacity-85 cursor-pointer transition-all uppercase tracking-wider text-[11px]"
+              id={`toggle-history-${card.id}`}
+            >
+              <span>📜</span>
+              <span>
+                {showHistory ? 'Скрыть логи' : `Логи (${card.history?.length || 0})`}
               </span>
             </button>
           </div>
@@ -913,6 +946,38 @@ export const ShameCardComponent: React.FC<ShameCardComponentProps> = ({
                       ОК
                     </button>
                   </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Collapsible History Tray */}
+          <AnimatePresence>
+            {showHistory && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.22, ease: 'easeInOut' }}
+                className="mt-3 space-y-3 overflow-hidden"
+              >
+                <div className="max-h-52 overflow-y-auto space-y-2 pr-1 text-left">
+                  {(!card.history || card.history.length === 0) ? (
+                    <p className="text-[10px] text-zinc-500 italic text-center py-2 font-sans">
+                      Логи изменений отсутствуют.
+                    </p>
+                  ) : (
+                    card.history.map((entry) => (
+                      <div key={entry.id} className="bg-black/15 p-2 rounded-lg border border-zinc-800/20 text-[11px]">
+                        <div className="flex items-center justify-between mb-1 font-mono text-[9px] text-zinc-500">
+                          <span className="font-bold text-zinc-400">{entry.editor}</span>
+                          <span>{new Date(entry.date).toLocaleString('ru-RU')}</span>
+                        </div>
+                        <div className="font-bold text-red-400 font-sans">{entry.action}</div>
+                        <p className="text-zinc-300 font-sans whitespace-pre-line mt-0.5" style={{ fontSize: '10px' }}>{entry.details}</p>
+                      </div>
+                    ))
+                  )}
                 </div>
               </motion.div>
             )}

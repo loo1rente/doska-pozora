@@ -78,6 +78,7 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
     editingCard ? editingCard.severity : 'minor'
   );
   const [cardPhotoUrl, setCardPhotoUrl] = useState(editingCard ? editingCard.photoUrl : PRESET_AVATARS[0].url);
+  const [cardTags, setCardTags] = useState(editingCard && editingCard.tags ? editingCard.tags.join(', ') : '');
   const [customCategory, setCustomCategory] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,6 +90,7 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
       setCardCategory(editingCard.category || '');
       setCardSeverity(editingCard.severity);
       setCardPhotoUrl(editingCard.photoUrl);
+      setCardTags(editingCard.tags ? editingCard.tags.join(', ') : '');
       setActiveTab('cards');
     } else {
       clearCardForm();
@@ -101,6 +103,7 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
     setCardCategory('');
     setCardSeverity('minor');
     setCardPhotoUrl(PRESET_AVATARS[0].url);
+    setCardTags('');
     setCustomCategory('');
   };
 
@@ -175,8 +178,34 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
     }
 
     const finalCategory = '';
+    const tagArray = cardTags.split(',').map(t => t.trim()).filter(Boolean);
 
     if (editingCard) {
+      const changes: string[] = [];
+      if (editingCard.name !== cardName) changes.push(`Имя: было "${editingCard.name}" стало "${cardName}"`);
+      if (editingCard.description !== cardDesc) changes.push(`Описание изменено`);
+      if (editingCard.severity !== cardSeverity) {
+        const sevMap = { minor: "легкая", moderate: "средняя", epic: "эпическая" };
+        changes.push(`Тяжесть: была "${sevMap[editingCard.severity]}" стала "${sevMap[cardSeverity]}"`);
+      }
+      if (editingCard.photoUrl !== cardPhotoUrl) changes.push(`Обновлено фото`);
+      
+      const oldTags = editingCard.tags || [];
+      if (JSON.stringify(oldTags) !== JSON.stringify(tagArray)) {
+        changes.push(`Теги изменились: было [${oldTags.join(', ')}] стало [${tagArray.join(', ')}]`);
+      }
+
+      const updatedHistory = [...(editingCard.history || [])];
+      if (changes.length > 0) {
+        updatedHistory.push({
+          id: `hist_${Date.now()}`,
+          editor: localStorage.getItem('shame_user_nickname') || 'Администратор',
+          action: 'Редактирование карточки',
+          date: new Date().toISOString(),
+          details: changes.join('; ')
+        });
+      }
+
       onUpdateCard({
         ...editingCard,
         name: cardName,
@@ -184,9 +213,19 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
         category: finalCategory,
         severity: cardSeverity,
         photoUrl: cardPhotoUrl,
+        tags: tagArray,
+        history: updatedHistory,
       });
       setEditingCard(null);
     } else {
+      const initialHistory = [{
+        id: `hist_${Date.now()}`,
+        editor: localStorage.getItem('shame_user_nickname') || 'Администратор',
+        action: 'Создание карточки улик',
+        date: new Date().toISOString(),
+        details: `Создано через Веб-интерфейс. Теги: ${tagArray.length > 0 ? tagArray.join(', ') : 'нет'}`
+      }];
+
       onAddCard({
         name: cardName,
         description: cardDesc,
@@ -194,6 +233,8 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
         severity: cardSeverity,
         photoUrl: cardPhotoUrl,
         date: new Date().toISOString().split('T')[0],
+        tags: tagArray,
+        history: initialHistory,
       });
     }
     clearCardForm();
@@ -875,6 +916,19 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
                         <option value="moderate">⚡ Серьезный косяк</option>
                         <option value="epic">🔥 Эпический факап</option>
                       </select>
+                    </div>
+
+                    {/* Tags input */}
+                    <div>
+                      <label className="text-xs text-zinc-400 block mb-1">Теги (через запятую)</label>
+                      <input
+                        type="text"
+                        value={cardTags}
+                        onChange={(e) => setCardTags(e.target.value)}
+                        placeholder="опоздание, баг, деплой, ололо"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-red-500"
+                        id="shame-card-tags-input"
+                      />
                     </div>
 
                     {/* Image Selector & Upload Section */}
