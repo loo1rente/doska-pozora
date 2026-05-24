@@ -31,13 +31,15 @@ function saveAuthorizedChats() {
 
 interface UserBotSession {
   state: "UNAUTHORIZED" | "IDLE" |
-         "AWAITING_NAME" | "AWAITING_DESCRIPTION" | "AWAITING_SEVERITY" | "AWAITING_PHOTO" |
+         "AWAITING_NAME" | "AWAITING_DESCRIPTION" | "AWAITING_SEVERITY" | "AWAITING_PHOTO" | "AWAITING_TAGS" |
          "AWAITING_CUSTOM_TITLE" | "AWAITING_CUSTOM_SUBTITLE" |
          "AWAITING_ACCENT_COLOR" | "AWAITING_BG_COLOR" | "AWAITING_CARD_COLOR" | "AWAITING_TEXT_COLOR" |
-         "AWAITING_EDIT_NAME" | "AWAITING_EDIT_DESCRIPTION" | "AWAITING_EDIT_PHOTO";
+         "AWAITING_EDIT_NAME" | "AWAITING_EDIT_DESCRIPTION" | "AWAITING_EDIT_PHOTO" | "AWAITING_EDIT_TAGS";
   name?: string;
   description?: string;
   severity?: "minor" | "moderate" | "epic";
+  tags?: string[];
+  photoUrlData?: string;
   editCardId?: string;
 }
 
@@ -517,6 +519,10 @@ function getEditCardMarkup(cardId: string) {
           { text: "📸 Обновить Фотографию", callback_data: `edit_fphoto_${cardId}` }
         ],
         [
+          { text: "🏷️ Изменить Теги", callback_data: `edit_ftags_${cardId}` },
+          { text: "📜 История изменений", callback_data: `view_fhist_${cardId}` }
+        ],
+        [
           { text: "◀️ Вернуться к списку", callback_data: "admin_list_cards" }
         ]
       ]
@@ -645,7 +651,8 @@ async function handleTelegramUpdate(token: string, update: any) {
       "  1️⃣ Имя нарушителя\n" +
       "  2️⃣ Описание косяка\n" +
       "  3️⃣ Тяжесть вины\n" +
-      "  4️⃣ Веб-фото или пропуск\n\n" +
+      "  4️⃣ Веб-фото или пропуск\n" +
+      "  5️⃣ Теги позора нарушителя\n\n" +
       "🔧 *Быстрые админ-команды*:\n" +
       "• `/title <текст>` — Изменить заголовок сайта\n" +
       "• `/subtitle <текст>` — Изменить подзаголовок сайта\n" +
@@ -1018,7 +1025,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       await sendTelegramMessage(
         token,
         chatId,
-        "👤 *Шаг 1 из 4: Имя фигуранта*\n\nНапишите полное имя и фамилию фигуранта (или его никнейм):"
+        "👤 *Шаг 1 из 5: Имя фигуранта*\n\nНапишите полное имя и фамилию фигуранта (или его никнейм):"
       );
       await answerCallbackQuery(token, callbackQueryId);
       return;
@@ -1033,7 +1040,8 @@ async function handleTelegramUpdate(token: string, update: any) {
         session.editCardId = cardId;
         const msgText = `✏️ *Редактирование Фигуранта: ${card.name}*\n\n` +
                         `• Описание: _${card.description}_\n` +
-                        `• Тяжесть: *${card.severity === "minor" ? "🟢 Легкая" : card.severity === "moderate" ? "🟡 Средняя" : "🔴 Эпик"}*\n\n` +
+                        `• Тяжесть: *${card.severity === "minor" ? "🟢 Легкая" : card.severity === "moderate" ? "🟡 Средняя" : "🔴 Эпик"}*\n` +
+                        `• Теги: *${card.tags && card.tags.length > 0 ? card.tags.join(', ') : "нет"}*\n\n` +
                         `Выберите поле для интерактивного редактирования:`;
         await editTelegramMessage(token, chatId, messageId, msgText, getEditCardMarkup(cardId));
       } else {
@@ -1087,15 +1095,63 @@ async function handleTelegramUpdate(token: string, update: any) {
       const cards = await getAllCards();
       const currentCard = cards.find(c => c.id === cardId);
       if (currentCard) {
+        const oldSev = currentCard.severity;
         currentCard.severity = sev;
+        if (!currentCard.history) currentCard.history = [];
+        currentCard.history.push({
+          id: `hist_${Date.now()}`,
+          editor: "Telegram Бот",
+          action: "Изменение тяжести",
+          date: new Date().toISOString(),
+          details: `Было: ${oldSev === "minor" ? "Легкая" : oldSev === "moderate" ? "Средняя" : "Эпическая"}. Стало: ${sev === "minor" ? "Легкая" : sev === "moderate" ? "Средняя" : "Эпическая"}`
+        });
         await updateCard(currentCard);
         await answerCallbackQuery(token, callbackQueryId, `Тяжесть изменена на: ${sev}`);
 
         const msgText = `✏️ *Редактирование Фигуранта: ${currentCard.name}*\n\n` +
                         `• Описание: _${currentCard.description}_\n` +
-                        `• Тяжесть: *${currentCard.severity === "minor" ? "🟢 Легкая" : currentCard.severity === "moderate" ? "🟡 Средняя" : "🔴 Эпик"}*\n\n` +
+                        `• Тяжесть: *${currentCard.severity === "minor" ? "🟢 Легкая" : currentCard.severity === "moderate" ? "🟡 Средняя" : "🔴 Эпик"}*\n` +
+                        `• Теги: *${currentCard.tags && currentCard.tags.length > 0 ? currentCard.tags.join(', ') : "нет"}*\n\n` +
                         `Выберите поле для интерактивного редактирования:`;
         await editTelegramMessage(token, chatId, messageId, msgText, getEditCardMarkup(cardId));
+      } else {
+        await answerCallbackQuery(token, callbackQueryId, "Карточка не найдена!");
+      }
+      return;
+    }
+
+    if (callbackData.startsWith("edit_ftags_")) {
+      const cardId = callbackData.replace("edit_ftags_", "");
+      session.state = "AWAITING_EDIT_TAGS";
+      session.editCardId = cardId;
+      await sendTelegramMessage(token, chatId, "🏷️ *Редактирование Тегов*\n\nОтправьте новые теги через запятую (например: `опоздание, совещание, ололо`) или введите `/skip` для очистки тегов:");
+      await answerCallbackQuery(token, callbackQueryId);
+      return;
+    }
+
+    if (callbackData.startsWith("view_fhist_")) {
+      const cardId = callbackData.replace("view_fhist_", "");
+      const cardsList = await getAllCards();
+      const card = cardsList.find(c => c.id === cardId);
+      if (card) {
+        const hist = card.history || [];
+        let histText = `📜 *История изменений фигуранта: ${card.name}*\n\n`;
+        if (hist.length === 0) {
+          histText += "История изменений пуста.";
+        } else {
+          hist.forEach((h, index) => {
+            const hDate = new Date(h.date).toLocaleDateString("ru-RU", { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+            histText += `${index + 1}. *${h.action}* (${hDate})\n🧑‍💻 Редактор: _${h.editor}_\n${h.details ? `📝 Детали: _${h.details}_\n` : ""}\n`;
+          });
+        }
+        
+        await editTelegramMessage(token, chatId, messageId, histText, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "◀️ Назад к редактированию", callback_data: `edit_card_${cardId}` }]
+            ]
+          }
+        });
       } else {
         await answerCallbackQuery(token, callbackQueryId, "Карточка не найдена!");
       }
@@ -1393,7 +1449,16 @@ async function handleTelegramUpdate(token: string, update: any) {
           const cards = await getAllCards();
           const card = cards.find(c => c.id === session.editCardId);
           if (card) {
+            const oldName = card.name;
             card.name = text;
+            if (!card.history) card.history = [];
+            card.history.push({
+              id: `hist_${Date.now()}`,
+              editor: "Telegram Бот",
+              action: "Изменение имени",
+              date: new Date().toISOString(),
+              details: `Было: "${oldName}". Стало: "${text}"`
+            });
             await updateCard(card);
             session.state = "IDLE";
             await sendTelegramMessage(token, chatId, `✅ *Имя фигуранта успешно изменено на:* *${text}*\n\n_Введите /admin для открытия админки._`);
@@ -1413,7 +1478,16 @@ async function handleTelegramUpdate(token: string, update: any) {
           const cards = await getAllCards();
           const card = cards.find(c => c.id === session.editCardId);
           if (card) {
+            const oldDesc = card.description;
             card.description = text;
+            if (!card.history) card.history = [];
+            card.history.push({
+              id: `hist_${Date.now()}`,
+              editor: "Telegram Бот",
+              action: "Изменение описания",
+              date: new Date().toISOString(),
+              details: `Было: "${oldDesc}". Стало: "${text}"`
+            });
             await updateCard(card);
             session.state = "IDLE";
             await sendTelegramMessage(token, chatId, `✅ *Прогрешение фигуранта переписано на:* _${text}_\n\n_Напишите /admin для управления._`);
@@ -1463,6 +1537,14 @@ async function handleTelegramUpdate(token: string, update: any) {
             const card = cards.find(c => c.id === session.editCardId);
             if (card) {
               card.photoUrl = photoUrlInput;
+              if (!card.history) card.history = [];
+              card.history.push({
+                id: `hist_${Date.now()}`,
+                editor: "Telegram Бот",
+                action: "Обновление фото",
+                date: new Date().toISOString(),
+                details: "Фотография фигуранта была обновлена"
+              });
               await updateCard(card);
               session.state = "IDLE";
               await sendTelegramMessage(token, chatId, `✅ *Фотография фигуранта ${card.name} успешно обновлена!*\n\n_Напишите /admin для входа в админку._`);
@@ -1478,6 +1560,39 @@ async function handleTelegramUpdate(token: string, update: any) {
       }
       break;
 
+    case "AWAITING_EDIT_TAGS":
+      if (isCallback) return;
+      if (session.editCardId) {
+        let tagsList: string[] = [];
+        if (text && text !== "/skip" && text.toLowerCase() !== "пропустить") {
+          tagsList = text.split(",").map(t => t.trim()).filter(Boolean);
+        }
+        try {
+          const cards = await getAllCards();
+          const card = cards.find(c => c.id === session.editCardId);
+          if (card) {
+            const oldTags = card.tags || [];
+            card.tags = tagsList;
+            if (!card.history) card.history = [];
+            card.history.push({
+              id: `hist_${Date.now()}`,
+              editor: "Telegram Бот",
+              action: "Обновление тегов",
+              date: new Date().toISOString(),
+              details: `Было: [${oldTags.join(', ')}]. Стало: [${tagsList.join(', ')}]`
+            });
+            await updateCard(card);
+            session.state = "IDLE";
+            await sendTelegramMessage(token, chatId, `✅ *Теги фигуранта ${card.name} успешно изменены на:* ${tagsList.length > 0 ? tagsList.join(", ") : "нет"}\n\n_Введите /admin для открытия панели._`);
+          } else {
+            await sendTelegramMessage(token, chatId, "⚠️ Карточка фигуранта не найдена.");
+          }
+        } catch (err) {
+          await sendTelegramMessage(token, chatId, "❌ Ошибка при изменении тегов.");
+        }
+      }
+      break;
+
     case "AWAITING_NAME":
       if (isCallback) return;
       if (!text || text.startsWith("/")) {
@@ -1489,7 +1604,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       await sendTelegramMessage(
         token,
         chatId,
-        "📝 *Шаг 2 из 4: Описание проступка*\n\nПодробно опишите, какой косяк совершил фигурант (например: 'Опять свалил вину на джуна и уехал на дачу'):"
+        "📝 *Шаг 2 из 5: Описание проступка*\n\nПодробно опишите, какой косяк совершил фигурант (например: 'Опять свалил вину на джуна и уехал на дачу'):"
       );
       break;
 
@@ -1504,7 +1619,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       await sendTelegramMessage(
         token,
         chatId,
-        "⚠️ *Шаг 3 из 4: Степень вины*\n\nВыберите степень тяжести, отправив один из вариантов:\n\n🟢 *Легкий*\n🟡 *Средний*\n🔴 *Эпический*",
+        "⚠️ *Шаг 3 из 5: Степень вины*\n\nВыберите степень тяжести, отправив один из вариантов:\n\n🟢 *Легкий*\n🟡 *Средний*\n🔴 *Эпический*",
         {
           reply_markup: {
             keyboard: [
@@ -1552,7 +1667,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       await sendTelegramMessage(
         token,
         chatId,
-        "📸 *Шаг 4 из 4: Фотография*\n\nПожалуйста, отправьте фотографию фигуранта.\n\n_Если вы хотите использовать стандартный аватар по умолчанию, отправьте команду_ `/skip`.",
+        "📸 *Шаг 4 из 5: Фотография*\n\nПожалуйста, отправьте фотографию фигуранта.\n\n_Если вы хотите использовать стандартный аватар по умолчанию, отправьте команду_ `/skip`.",
         {
           reply_markup: {
             remove_keyboard: true
@@ -1601,20 +1716,44 @@ async function handleTelegramUpdate(token: string, update: any) {
         return;
       }
 
-      // We have all details! Let's build and publish the ShameCard.
+      // Transition to Stage 5: Tags list
+      session.photoUrlData = photoUrl;
+      session.state = "AWAITING_TAGS";
+      await sendTelegramMessage(
+        token,
+        chatId,
+        "🏷️ *Шаг 5 из 5: Теги фигуранта*\n\nНапишите теги позора через запятую (например: _веб, баг, деплой_) или введите команду `/skip` для пропуска."
+      );
+      break;
+
+    case "AWAITING_TAGS": {
+      if (isCallback) return;
+      let tagsList: string[] = [];
+      if (text && text !== "/skip" && text.toLowerCase() !== "пропустить") {
+        tagsList = text.split(",").map(t => t.trim()).filter(Boolean);
+      }
+      
       const timestamp = Date.now();
       const card: ShameCard = {
         id: `shame_tg_${timestamp}`,
         name: session.name || "Анонимный Фигурант",
         description: session.description || "Совершил тайный косяк",
-        photoUrl: photoUrl,
+        photoUrl: session.photoUrlData || "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400&q=80",
         category: "",
         severity: session.severity || "minor",
         date: new Date().toISOString().split("T")[0],
         tomatoes: 0,
         facepalms: 0,
         forgiven: 0,
-        comments: []
+        comments: [],
+        tags: tagsList,
+        history: [{
+          id: `hist_${Date.now()}`,
+          editor: "Telegram Бот",
+          action: "Создание карточки улик",
+          date: new Date().toISOString(),
+          details: `Создано в Telegram. Теги: ${tagsList.length > 0 ? tagsList.join(", ") : "нет"}`
+        }]
       };
 
       try {
@@ -1623,7 +1762,7 @@ async function handleTelegramUpdate(token: string, update: any) {
         await sendTelegramMessage(
           token,
           chatId,
-          `🎉 *Фигурант успешно добавлен!*\n\nКарточка позора для *${card.name}* создана и опубликована! Ступайте швырять томаты на доске позора!`
+          `🎉 *Фигурант успешно добавлен!*\n\nКарточка позора для *${card.name}* создана и опубликована! Теги: ${tagsList.length > 0 ? tagsList.map(t => `#${t}`).join(", ") : "нет"}.\n\nСтупайте швырять томаты на доске позора!`
         );
       } catch (saveError) {
         console.error("Failed to save card requested by Telegram Bot:", saveError);
@@ -1634,6 +1773,7 @@ async function handleTelegramUpdate(token: string, update: any) {
         );
       }
       break;
+    }
 
     default:
       session.state = "IDLE";

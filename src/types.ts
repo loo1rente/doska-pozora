@@ -7,6 +7,14 @@ export interface ShameComment {
   replyToAuthor?: string; // Optional: username we are replying to
 }
 
+export interface ShameHistoryEntry {
+  id: string;
+  editor: string;
+  action: string;
+  date: string; // ISO string
+  details?: string;
+}
+
 export interface ShameCard {
   id: string;
   name: string;
@@ -19,6 +27,8 @@ export interface ShameCard {
   facepalms: number;
   forgiven: number;
   comments?: ShameComment[];
+  tags?: string[];
+  history?: ShameHistoryEntry[];
 }
 
 export type ThemePreset = 'artistic' | 'crimson' | 'cyberpunk' | 'retro' | 'clean' | 'nordic';

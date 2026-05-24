@@ -177,6 +177,12 @@ export async function initializeDb() {
       await dbClient.query(`
         ALTER TABLE shame_cards ADD COLUMN IF NOT EXISTS comments TEXT DEFAULT '[]'
       `);
+      await dbClient.query(`
+        ALTER TABLE shame_cards ADD COLUMN IF NOT EXISTS tags TEXT DEFAULT '[]'
+      `);
+      await dbClient.query(`
+        ALTER TABLE shame_cards ADD COLUMN IF NOT EXISTS history TEXT DEFAULT '[]'
+      `);
       console.log('Table "shame_cards" verified/created with comments column.');
 
       // Create shame_users table for authenticating user names
@@ -306,12 +312,28 @@ export async function getAllCards(): Promise<ShameCard[]> {
       const res = await pool.query('SELECT * FROM shame_cards');
       dbCards = res.rows.map(row => {
         let parsedComments = [];
+        let parsedTags = [];
+        let parsedHistory = [];
         try {
           if (row.comments) {
             parsedComments = typeof row.comments === 'string' ? JSON.parse(row.comments) : row.comments;
           }
         } catch (e) {
           console.error(`Failed to parse comments for row ${row.id}:`, e);
+        }
+        try {
+          if (row.tags) {
+            parsedTags = typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags;
+          }
+        } catch (e) {
+          console.error(`Failed to parse tags for row ${row.id}:`, e);
+        }
+        try {
+          if (row.history) {
+            parsedHistory = typeof row.history === 'string' ? JSON.parse(row.history) : row.history;
+          }
+        } catch (e) {
+          console.error(`Failed to parse history for row ${row.id}:`, e);
         }
         return {
           id: row.id,
@@ -324,7 +346,9 @@ export async function getAllCards(): Promise<ShameCard[]> {
           tomatoes: Number(row.tomatoes),
           facepalms: Number(row.facepalms),
           forgiven: Number(row.forgiven),
-          comments: parsedComments
+          comments: parsedComments,
+          tags: parsedTags,
+          history: parsedHistory
         };
       });
       dbSuccess = true;
@@ -389,13 +413,13 @@ export async function addCard(card: ShameCard): Promise<void> {
   if (isPostgres && pool) {
     try {
       await pool.query(`
-        INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven, comments)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven, comments, tags, history)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (id) DO UPDATE 
         SET name = EXCLUDED.name, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, 
             category = EXCLUDED.category, severity = EXCLUDED.severity, date = EXCLUDED.date, 
             tomatoes = EXCLUDED.tomatoes, facepalms = EXCLUDED.facepalms, forgiven = EXCLUDED.forgiven,
-            comments = EXCLUDED.comments
+            comments = EXCLUDED.comments, tags = EXCLUDED.tags, history = EXCLUDED.history
       `, [
         card.id,
         card.name,
@@ -407,7 +431,9 @@ export async function addCard(card: ShameCard): Promise<void> {
         card.tomatoes,
         card.facepalms,
         card.forgiven,
-        JSON.stringify(card.comments || [])
+        JSON.stringify(card.comments || []),
+        JSON.stringify(card.tags || []),
+        JSON.stringify(card.history || [])
       ]);
     } catch (e) {
       console.error('Postgres write error in addCard:', e);
@@ -457,7 +483,7 @@ export async function updateCard(card: ShameCard): Promise<void> {
     try {
       await pool.query(`
         UPDATE shame_cards
-        SET name = $2, description = $3, photo_url = $4, category = $5, severity = $6, date = $7, tomatoes = $8, facepalms = $9, forgiven = $10, comments = $11
+        SET name = $2, description = $3, photo_url = $4, category = $5, severity = $6, date = $7, tomatoes = $8, facepalms = $9, forgiven = $10, comments = $11, tags = $12, history = $13
         WHERE id = $1
       `, [
         card.id,
@@ -470,7 +496,9 @@ export async function updateCard(card: ShameCard): Promise<void> {
         card.tomatoes,
         card.facepalms,
         card.forgiven,
-        JSON.stringify(card.comments || [])
+        JSON.stringify(card.comments || []),
+        JSON.stringify(card.tags || []),
+        JSON.stringify(card.history || [])
       ]);
     } catch (e) {
       console.error('Postgres write error in updateCard:', e);
