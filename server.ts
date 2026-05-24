@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import fs from "fs";
 import dotenv from "dotenv";
 
 // Load configuration
@@ -24,6 +25,13 @@ async function startServer() {
 
   // Middleware
   app.use(express.json({ limit: '15mb' }));
+
+  // Serve dynamic music uploads
+  const uploadsPath = path.join(process.cwd(), "uploads");
+  if (!fs.existsSync(uploadsPath)) {
+    fs.mkdirSync(uploadsPath, { recursive: true });
+  }
+  app.use("/uploads", express.static(uploadsPath));
 
   // Initialize DB tables (or local files)
   await initializeDb();

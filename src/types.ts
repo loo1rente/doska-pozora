@@ -7,6 +7,12 @@ export interface ShameComment {
   replyToAuthor?: string; // Optional: username we are replying to
 }
 
+export interface BGMTrack {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface ShameHistoryEntry {
   id: string;
   editor: string;
@@ -51,6 +57,7 @@ export interface ThemeSettings {
   reactionCooldown?: number;
   maxReactionsLimit?: number;
   commentCooldown?: number;
+  bgmPlaylist?: BGMTrack[];
 }
 
 export const PRESET_THEMES: Record<ThemePreset, ThemeSettings> = {

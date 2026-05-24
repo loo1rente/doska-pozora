@@ -1,4 +1,4 @@
-import { ShameCard, PRESET_THEMES, ThemeSettings, ThemePreset } from "./src/types";
+import { ShameCard, PRESET_THEMES, ThemeSettings, ThemePreset, BGMTrack } from "./src/types";
 import { initialShameCards } from "./src/data/initialData";
 import { addCard, getAllCards, updateCard, deleteCard, getActiveTheme, saveActiveTheme } from "./server_db";
 import fs from "fs";
@@ -34,7 +34,8 @@ interface UserBotSession {
          "AWAITING_NAME" | "AWAITING_DESCRIPTION" | "AWAITING_SEVERITY" | "AWAITING_PHOTO" | "AWAITING_TAGS" |
          "AWAITING_CUSTOM_TITLE" | "AWAITING_CUSTOM_SUBTITLE" |
          "AWAITING_ACCENT_COLOR" | "AWAITING_BG_COLOR" | "AWAITING_CARD_COLOR" | "AWAITING_TEXT_COLOR" |
-         "AWAITING_EDIT_NAME" | "AWAITING_EDIT_DESCRIPTION" | "AWAITING_EDIT_PHOTO" | "AWAITING_EDIT_TAGS";
+         "AWAITING_EDIT_NAME" | "AWAITING_EDIT_DESCRIPTION" | "AWAITING_EDIT_PHOTO" | "AWAITING_EDIT_TAGS" |
+         "AWAITING_MUSIC_FILE";
   name?: string;
   description?: string;
   severity?: "minor" | "moderate" | "epic";
@@ -139,11 +140,95 @@ function getMainAdminMenuMarkup() {
           { text: "🧹 Сброс и Очистка", callback_data: "admin_clearing" }
         ],
         [
+          { text: "🎵 Настройка Музыки", callback_data: "admin_music_panel" },
           { text: "➕ Добавить фигуранта", callback_data: "admin_add_card" }
         ]
       ]
     }
   };
+}
+
+async function getMusicMenuText() {
+  const theme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
+  const playlist = theme.bgmPlaylist || [];
+  let txt = "🎵 *Управление Фоновой Музыкой*\n\n";
+  txt += "Здесь вы можете настраивать плейлист, отправляя ссылки на Google Диск / прямые MP3 ссылки, или *загружая файлы песен напрямую в этот чат*!\n\n";
+  txt += "*Текущий плейлист*:\n";
+  if (playlist.length === 0) {
+    txt += "_Нет добавленных треков._\n";
+  } else {
+    playlist.forEach((t, i) => {
+      txt += `${i + 1}. *${t.name}*\n  _${t.url.substring(0, 50)}${t.url.length > 50 ? "..." : ""}_\n`;
+    });
+  }
+  return txt;
+}
+
+function getMusicMenuMarkup(playlist: BGMTrack[]) {
+  const inline_keyboard: any[] = [];
+  
+  // List tracks with delete buttons
+  playlist.forEach((t) => {
+    inline_keyboard.push([
+      { text: `❌ Удалить: ${t.name.substring(0, 18)}`, callback_data: `del_track_${t.id}` }
+    ]);
+  });
+  
+  // Buttons for adding track
+  inline_keyboard.push([
+    { text: "➕ Загрузить файл / Ссылку", callback_data: "add_track_interactive" }
+  ]);
+  
+  inline_keyboard.push([
+    { text: "◀️ Назад в меню", callback_data: "admin_main" }
+  ]);
+  
+  return {
+    reply_markup: {
+      inline_keyboard
+    }
+  };
+}
+
+async function downloadTelegramFile(token: string, fileId: string, destPath: string): Promise<boolean> {
+  try {
+    // 1. Get file path from Telegram
+    const url = `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`;
+    const infoRes = await fetch(url);
+    if (!infoRes.ok) {
+      console.error(`Telegram getFile API error: ${infoRes.statusText}`);
+      return false;
+    }
+    const infoJSON: any = await infoRes.json();
+    if (!infoJSON.ok || !infoJSON.result?.file_path) {
+      console.error("Invalid response from Telegram getFile API:", infoJSON);
+      return false;
+    }
+    const filePath = infoJSON.result.file_path;
+    
+    // 2. Download the actual file content
+    const downloadUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    const fileRes = await fetch(downloadUrl);
+    if (!fileRes.ok) {
+      console.error(`Failed to download file from Telegram path ${filePath}`);
+      return false;
+    }
+    
+    // Make sure destination folder parent exists
+    const parentDir = path.dirname(destPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    
+    // Write buffer using filesystem stream or writeFileSync
+    const buffer = await fileRes.arrayBuffer();
+    fs.writeFileSync(destPath, Buffer.from(buffer));
+    console.log(`Successfully saved downloaded file to ${destPath}`);
+    return true;
+  } catch (err) {
+    console.error("Error in downloadTelegramFile:", err);
+    return false;
+  }
 }
 
 async function getThemesMenuText() {
@@ -1013,6 +1098,56 @@ async function handleTelegramUpdate(token: string, update: any) {
       return;
     }
 
+    if (callbackData === "admin_music_panel") {
+      const activeTheme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
+      const textMusic = await getMusicMenuText();
+      await editTelegramMessage(
+        token,
+        chatId,
+        messageId,
+        textMusic,
+        getMusicMenuMarkup(activeTheme.bgmPlaylist || [])
+      );
+      await answerCallbackQuery(token, callbackQueryId);
+      return;
+    }
+
+    if (callbackData === "add_track_interactive") {
+      session.state = "AWAITING_MUSIC_FILE";
+      await sendTelegramMessage(
+        token,
+        chatId,
+        "🎵 *Добавление Трека*\n\nОтправьте аудиофайл (MP3/M4A), голосовое сообщение или текстовую ссылку (например, Google Диск или прямую ссылку на .mp3):"
+      );
+      await answerCallbackQuery(token, callbackQueryId);
+      return;
+    }
+
+    if (callbackData.startsWith("del_track_")) {
+      const trackId = callbackData.replace("del_track_", "");
+      try {
+        const theme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
+        const playlist = theme.bgmPlaylist || [];
+        const updated = playlist.filter((t: BGMTrack) => t.id !== trackId);
+        theme.bgmPlaylist = updated;
+        await saveActiveTheme(theme);
+        
+        await answerCallbackQuery(token, callbackQueryId, "Трек удален!");
+        
+        const textMusic = await getMusicMenuText();
+        await editTelegramMessage(
+          token,
+          chatId,
+          messageId,
+          textMusic,
+          getMusicMenuMarkup(updated)
+        );
+      } catch (err) {
+        await answerCallbackQuery(token, callbackQueryId, "Ошибка удаления трека!");
+      }
+      return;
+    }
+
     if (callbackData === "admin_list_cards") {
       const cardsList = await getAllCards();
       await redisplayCardsList(token, chatId, messageId, cardsList);
@@ -1341,6 +1476,117 @@ async function handleTelegramUpdate(token: string, update: any) {
   // TEXT MESSAGE HANDLER FOR INPUT SESSIONS
   // ==========================================
   switch (session.state) {
+    case "AWAITING_MUSIC_FILE": {
+      // 1. Check if they sent a text link
+      if (text && (text.startsWith("http://") || text.startsWith("https://"))) {
+        try {
+          const theme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
+          const playlist = theme.bgmPlaylist || [];
+          
+          let trackName = "Ссылка Telegram";
+          if (text.includes("drive.google.com")) {
+            trackName = "Google Drive (Диск)";
+          } else {
+            const lastPart = text.split("/").pop() || "";
+            if (lastPart.endsWith(".mp3") || lastPart.endsWith(".m4a") || lastPart.endsWith(".ogg") || lastPart.endsWith(".wav")) {
+              trackName = decodeURIComponent(lastPart);
+            }
+          }
+          
+          const newTrack: BGMTrack = {
+            id: `track_${Date.now()}`,
+            name: `🎵 ${trackName}`,
+            url: text
+          };
+          
+          playlist.push(newTrack);
+          theme.bgmPlaylist = playlist;
+          await saveActiveTheme(theme);
+          
+          session.state = "IDLE";
+          await sendTelegramMessage(
+            token,
+            chatId,
+            `✅ *Ссылка успешно добавлена!*\n\nНазвание: *${newTrack.name}*\nURL: \`${text}\`\n\n_Напишите /admin для перехода к меню._`
+          );
+        } catch (err) {
+          await sendTelegramMessage(token, chatId, "❌ Произошла ошибка при сохранении ссылки.");
+        }
+        break;
+      }
+      
+      // 2. Check if a file was sent inside update.message
+      const msg = update.message;
+      if (msg) {
+        let fileId = "";
+        let originalName = "";
+        
+        if (msg.audio) {
+          fileId = msg.audio.file_id;
+          const artist = msg.audio.performer || "";
+          const title = msg.audio.title || "";
+          originalName = artist && title ? `${artist} - ${title}` : (msg.audio.file_name || "аудиозапись.mp3");
+        } else if (msg.document && (msg.document.mime_type?.startsWith("audio/") || msg.document.file_name?.endsWith(".mp3") || msg.document.file_name?.endsWith(".m4a") || msg.document.file_name?.endsWith(".ogg") || msg.document.file_name?.endsWith(".wav"))) {
+          fileId = msg.document.file_id;
+          originalName = msg.document.file_name || "документ.mp3";
+        } else if (msg.voice) {
+          fileId = msg.voice.file_id;
+          originalName = `Голосовое от ${new Date().toLocaleDateString()}`;
+        }
+        
+        if (fileId) {
+          await sendTelegramMessage(token, chatId, "⏳ *Загрузка и обработка аудиофайла...* Пожалуйста, подождите.");
+          
+          // Generate file extension
+          let ext = ".mp3";
+          if (originalName.toLowerCase().endsWith(".m4a")) ext = ".m4a";
+          else if (originalName.toLowerCase().endsWith(".ogg")) ext = ".ogg";
+          else if (originalName.toLowerCase().endsWith(".wav")) ext = ".wav";
+          
+          const filename = `track_${Date.now()}${ext}`;
+          const destPath = path.join(process.cwd(), "uploads", filename);
+          const success = await downloadTelegramFile(token, fileId, destPath);
+          
+          if (success) {
+            try {
+              const theme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
+              const playlist = theme.bgmPlaylist || [];
+              const relativeUrl = `/uploads/${filename}`;
+              
+              const newTrack: BGMTrack = {
+                id: `track_${Date.now()}`,
+                name: originalName,
+                url: relativeUrl
+              };
+              
+              playlist.push(newTrack);
+              theme.bgmPlaylist = playlist;
+              await saveActiveTheme(theme);
+              
+              session.state = "IDLE";
+              await sendTelegramMessage(
+                token,
+                chatId,
+                `✅ *Аудиофайл успешно загружен на сайт!*\n\nНазвание: *${originalName}*\nПлейлист обновлен!\n\n_Напишите /admin для перехода к меню._`
+              );
+            } catch (err) {
+              await sendTelegramMessage(token, chatId, "❌ Не удалось прописать файл в настройки темы сайта.");
+            }
+          } else {
+            await sendTelegramMessage(token, chatId, "❌ Сбой при скачивании файла с серверов Telegram.");
+          }
+          break;
+        }
+      }
+      
+      await sendTelegramMessage(
+        token,
+        chatId,
+        "⚠️ Пожалуйста, отправьте корректную ссылку на MP3/Google Drive или прикрепите аудиофайл в чат. Напишите `/cancel` для отмены."
+      );
+      break;
+    }
+
     case "IDLE":
       if (!isCallback) {
         if (text === "/add" || text.toLowerCase() === "добавить") {
