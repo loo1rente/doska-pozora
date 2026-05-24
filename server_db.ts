@@ -89,6 +89,7 @@ const databaseUrl = process.env.DATABASE_URL || '';
 const isPostgres = databaseUrl.trim().length > 0;
 
 let pool: pg.Pool | null = null;
+let isPostgresConnected = false;
 if (isPostgres) {
   console.log('Connecting to PostgreSQL database using DATABASE_URL...');
   pool = new pg.Pool({
@@ -156,6 +157,7 @@ export async function initializeDb() {
     try {
       const dbClient = await pool.connect();
       console.log('PostgreSQL connection established successfully.');
+      isPostgresConnected = true;
       
       // Create shame_cards table
       await dbClient.query(`
@@ -242,7 +244,7 @@ export async function isCardDeleted(id: string): Promise<boolean> {
     }
   }
 
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       const res = await pool.query('SELECT 1 FROM deleted_card_ids WHERE id = $1', [id]);
       if (res.rows.length > 0) {
@@ -271,7 +273,7 @@ export async function trackDeletedCardId(id: string): Promise<void> {
     }
   }
 
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       await pool.query('INSERT INTO deleted_card_ids (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [id]);
     } catch (e) {
@@ -307,7 +309,7 @@ export async function getAllCards(): Promise<ShameCard[]> {
     }
   }
 
-  if (!dbSuccess && isPostgres && pool) {
+  if (!dbSuccess && isPostgresConnected && pool) {
     try {
       const res = await pool.query('SELECT * FROM shame_cards');
       dbCards = res.rows.map(row => {
@@ -410,7 +412,7 @@ export async function addCard(card: ShameCard): Promise<void> {
   }
 
   // 2. Write to Postgres
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       await pool.query(`
         INSERT INTO shame_cards (id, name, description, photo_url, category, severity, date, tomatoes, facepalms, forgiven, comments, tags, history)
@@ -479,7 +481,7 @@ export async function updateCard(card: ShameCard): Promise<void> {
   }
 
   // 2. Write to Postgres
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       await pool.query(`
         UPDATE shame_cards
@@ -527,7 +529,7 @@ export async function deleteCard(id: string): Promise<void> {
   }
 
   // 2. Delete from Postgres
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       await pool.query('DELETE FROM shame_cards WHERE id = $1', [id]);
     } catch (e) {
@@ -559,7 +561,7 @@ export async function getActiveTheme(): Promise<ThemeSettings | null> {
     }
   }
 
-  if (!dbSuccess && isPostgres && pool) {
+  if (!dbSuccess && isPostgresConnected && pool) {
     try {
       const res = await pool.query('SELECT settings FROM shame_theme WHERE id = $1', ['active_theme']);
       if (res.rows.length > 0) {
@@ -593,7 +595,7 @@ export async function saveActiveTheme(theme: ThemeSettings): Promise<void> {
     }
   }
 
-  if (isPostgres && pool) {
+  if (isPostgresConnected && pool) {
     try {
       await pool.query(`
         INSERT INTO shame_theme (id, settings)
@@ -635,7 +637,7 @@ export async function authenticateUser(nickname: string, passwordPlain: string):
   }
 
   // 2. Иначе попробуем в Postgres
-  if (!dbSuccess && isPostgres && pool) {
+  if (!dbSuccess && isPostgresConnected && pool) {
     try {
       const res = await pool.query('SELECT password FROM shame_users WHERE nickname = $1', [normNick]);
       if (res.rows.length > 0) {
@@ -688,7 +690,7 @@ export async function authenticateUser(nickname: string, passwordPlain: string):
     }
 
     // Сохранить в Postgres
-    if (isPostgres && pool) {
+    if (isPostgresConnected && pool) {
       try {
         await pool.query(`
           INSERT INTO shame_users (nickname, password)
