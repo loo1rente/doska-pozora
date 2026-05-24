@@ -279,6 +279,25 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Synchronize document body background with the active theme background
+  useEffect(() => {
+    if (theme && theme.backgroundColor) {
+      document.body.style.backgroundColor = theme.backgroundColor;
+    }
+  }, [theme]);
+
+  // Lock scrolling of the background body when the Admin Panel or modals are active
+  useEffect(() => {
+    if (isAdminOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isAdminOpen]);
+
   // Theme custom save handler
   const handleUpdateTheme = (newTheme: ThemeSettings) => {
     setTheme(newTheme);

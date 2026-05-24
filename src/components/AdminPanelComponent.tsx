@@ -356,7 +356,7 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            className="w-full max-w-5xl bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col h-[90vh] md:h-[80vh] overflow-hidden"
+            className="w-full max-w-5xl bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-3xl p-4 sm:p-8 shadow-2xl flex flex-col h-[90vh] md:h-[80vh] overflow-hidden"
             id="admin-board-panel"
           >
             {/* Panel Top Title Block */}
@@ -366,43 +366,43 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
                   <Settings size={22} className="animate-spin-slow" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-                    Админка Доски Позора <span className="text-xs bg-red-500/20 text-red-400 py-0.5 px-2 rounded-full uppercase tracking-widest font-bold">Live</span>
+                  <h2 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
+                    Админка Доски Позора <span className="text-[10px] sm:text-xs bg-red-500/20 text-red-400 py-0.5 px-2 rounded-full uppercase tracking-widest font-bold">Live</span>
                   </h2>
-                  <p className="text-xs text-zinc-400">Настраивайте дизайн сайта онлайн и наказывайте за провинности.</p>
+                  <p className="text-[11px] sm:text-xs text-zinc-400">Настраивайте дизайн сайта онлайн и наказывайте за провинности.</p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <button
                   onClick={onClearAllComments}
-                  className="px-3 py-1.5 text-xs bg-red-950 hover:bg-red-900 rounded-lg text-red-450 border border-red-500/20 flex items-center gap-1.5 transition-colors cursor-pointer font-semibold"
+                  className="px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs bg-red-950 hover:bg-red-900 rounded-lg text-red-400 border border-red-500/20 flex items-center gap-1 sm:gap-1.5 transition-colors cursor-pointer font-semibold"
                   title="Удалить абсолютно все комментарии из карточек"
                   id="admin-clear-comments-btn"
                 >
-                  <Trash2 size={13} />
-                  Очистить все комментарии
+                  <Trash2 size={12} className="sm:w-3.5 sm:h-3.5" />
+                  <span className="truncate">Очистить комментарии</span>
                 </button>
                 <button
                   onClick={onResetData}
-                  className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 rounded-lg text-amber-500 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs bg-zinc-800 hover:bg-zinc-700 rounded-lg text-amber-500 flex items-center gap-1 sm:gap-1.5 transition-colors cursor-pointer font-semibold"
                   title="Откатить все карточки и темы к заводскому позору"
                   id="reset-data-btn"
                 >
-                  <RefreshCw size={13} />
-                  Сброс по дефолту
+                  <RefreshCw size={12} className="sm:w-3.5 sm:h-3.5" />
+                  <span className="truncate">Сброс по дефолту</span>
                 </button>
                 <button
                   onClick={handleLogout}
-                  className="px-3 py-1.5 text-xs bg-red-950/60 hover:bg-red-900/60 border border-red-900/40 rounded-lg text-red-400 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs bg-red-950/60 hover:bg-red-900/60 border border-red-900/40 rounded-lg text-red-400 flex items-center gap-1 sm:gap-1.5 transition-colors cursor-pointer font-semibold"
                   id="logout-admin-btn"
                 >
-                  <LogOut size={13} />
-                  Выйти
+                  <LogOut size={12} className="sm:w-3.5 sm:h-3.5" />
+                  <span className="truncate">Выйти</span>
                 </button>
                 <button
                   onClick={onClose}
-                  className="px-4 py-1.5 text-xs bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-colors cursor-pointer"
+                  className="px-3 py-1 sm:px-4 sm:py-1.5 text-[10px] sm:text-xs bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-colors cursor-pointer font-bold"
                   id="back-to-site-btn"
                 >
                   Вернуться на сайт
@@ -411,26 +411,26 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
             </div>
 
             {/* TAB SELECTOR */}
-            <div className="flex gap-2 mt-4 p-1 bg-zinc-950 rounded-xl border border-zinc-800/60 flex-shrink-0">
+            <div className="flex gap-1 sm:gap-2 mt-4 p-1 bg-zinc-950 rounded-xl border border-zinc-800/60 flex-shrink-0">
               <button
                 onClick={() => setActiveTab('design')}
-                className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                className={`flex-1 py-1.5 sm:py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1 sm:gap-2 cursor-pointer ${
                   activeTab === 'design' ? 'bg-zinc-800 text-red-400 shadow-md' : 'text-zinc-400 hover:bg-zinc-900/50'
                 }`}
                 id="tab-design-btn"
               >
-                <Palette size={16} />
-                🎨 Дизайн и Оформление
+                <Palette size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="truncate">🎨 Дизайн</span>
               </button>
               <button
                 onClick={() => setActiveTab('cards')}
-                className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                className={`flex-1 py-1.5 sm:py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1 sm:gap-2 cursor-pointer ${
                   activeTab === 'cards' ? 'bg-zinc-800 text-red-400 shadow-md' : 'text-zinc-400 hover:bg-zinc-900/50'
                 }`}
                 id="tab-cards-btn"
               >
-                <UserPlus size={16} />
-                🦹 Фигуранты Доски ({cards.length})
+                <UserPlus size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="truncate">🦹 Фигуранты ({cards.length})</span>
               </button>
             </div>
 
@@ -996,7 +996,7 @@ export const AdminPanelComponent: React.FC<AdminPanelProps> = ({
                       {/* Preset funny Avatars quick Selector */}
                       <div>
                         <span className="text-[10px] text-zinc-400 block mb-1.5 uppercase tracking-wide">Или выберите мем из библиотеки улик:</span>
-                        <div className="grid grid-cols-6 gap-2">
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                           {PRESET_AVATARS.map((avatar) => (
                             <button
                               key={avatar.id}
