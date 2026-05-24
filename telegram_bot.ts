@@ -151,14 +151,19 @@ function getMainAdminMenuMarkup() {
 async function getMusicMenuText() {
   const theme = await getActiveTheme() || { ...PRESET_THEMES.artistic, bgmPlaylist: [] };
   const playlist = theme.bgmPlaylist || [];
-  let txt = "🎵 *Управление Фоновой Музыкой*\n\n";
-  txt += "Здесь вы можете настраивать плейлист, отправляя ссылки на Google Диск / прямые MP3 ссылки, или *загружая файлы песен напрямую в этот чат*!\n\n";
-  txt += "*Текущий плейлист*:\n";
+  let txt = "🎵 <b>Управление Фоновой Музыкой</b>\n\n";
+  txt += "Здесь вы можете настраивать плейлист, отправляя ссылки на Google Диск / прямые MP3 ссылки, или <b>загружая файлы песен напрямую в этот чат</b>!\n\n";
+  txt += "<b>Текущий плейлист</b>:\n";
   if (playlist.length === 0) {
-    txt += "_Нет добавленных треков._\n";
+    txt += "<i>Нет добавленных треков.</i>\n";
   } else {
     playlist.forEach((t, i) => {
-      txt += `${i + 1}. *${t.name}*\n  _${t.url.substring(0, 50)}${t.url.length > 50 ? "..." : ""}_\n`;
+      const escapeHtml = (str: string) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const cleanName = escapeHtml(t.name || "Без названия");
+      const rawUrl = t.url || "";
+      const shortenedUrl = rawUrl.substring(0, 45) + (rawUrl.length > 45 ? "..." : "");
+      const cleanUrl = escapeHtml(shortenedUrl);
+      txt += `${i + 1}. <b>${cleanName}</b>\n  <code>${cleanUrl}</code>\n`;
     });
   }
   return txt;
@@ -169,8 +174,9 @@ function getMusicMenuMarkup(playlist: BGMTrack[]) {
   
   // List tracks with delete buttons
   playlist.forEach((t) => {
+    const cleanName = (t.name || "Без названия").replace(/[_*`[\]()]/g, " ");
     inline_keyboard.push([
-      { text: `❌ Удалить: ${t.name.substring(0, 18)}`, callback_data: `del_track_${t.id}` }
+      { text: `❌ Удалить: ${cleanName.substring(0, 20)}`, callback_data: `del_track_${t.id}` }
     ]);
   });
   
@@ -1106,7 +1112,10 @@ async function handleTelegramUpdate(token: string, update: any) {
         chatId,
         messageId,
         textMusic,
-        getMusicMenuMarkup(activeTheme.bgmPlaylist || [])
+        {
+          parse_mode: "HTML",
+          ...getMusicMenuMarkup(activeTheme.bgmPlaylist || [])
+        }
       );
       await answerCallbackQuery(token, callbackQueryId);
       return;
@@ -1140,7 +1149,10 @@ async function handleTelegramUpdate(token: string, update: any) {
           chatId,
           messageId,
           textMusic,
-          getMusicMenuMarkup(updated)
+          {
+            parse_mode: "HTML",
+            ...getMusicMenuMarkup(updated)
+          }
         );
       } catch (err) {
         await answerCallbackQuery(token, callbackQueryId, "Ошибка удаления трека!");
